@@ -61,13 +61,10 @@ def _home_keyboard() -> InlineKeyboardMarkup:
 def _welcome_text(first_name: str) -> str:
     safe_name = html.escape(first_name or "Friend")
     return (
-        f"👋 <b>Welcome, {safe_name}!</b>\n\n"
-        "Your personal <b>Telegram File &amp; Text Vault</b> with an integrated <b>Mini App Manager</b>.\n\n"
-        "• Send any <b>file, video, photo, or audio</b> → Saved to your vault\n"
-        "• <code>/text Title | Content</code> → Save a formatted text note\n"
-        "• <code>/wizard Title</code> or <code>/batch Title</code> → Bundle files &amp; texts\n"
-        "• <code>/batch &lt;first_link&gt; &lt;last_link&gt; [Title]</code> → Batch directly from your public or private channel!\n"
-        "• Tap <b>Open My Vault Mini App</b> below to sort, rename, set PIN/expiring links, inspect batches, generate QR codes, or delete your items!"
+        f"👋 <b>Hi {safe_name}!</b>\n\n"
+        "This is a <b>File Store Bot</b>. Forward or send any file, media, or text to store it permanently, "
+        "and share it with anyone just by sharing your generated link.\n\n"
+        "📱 Open <b>My Vault Mini App</b> below to manage, sort, or delete your stored files anytime."
         f"{Config.CREDITS_HTML}"
     )
 
