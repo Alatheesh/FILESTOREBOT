@@ -1,10 +1,11 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
 from bot.config import Config
 from bot.database import db
 from bot.shortener import shorten_url
 
 WIZARD_SESSIONS: dict[int, dict] = {}
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 def _is_allowed_uploader(user_id: int) -> bool:
@@ -54,7 +55,7 @@ async def store_text_cmd(client: Client, message: Message):
         mime_type="text/plain",
     )
     reply_text, kb = await _make_share_reply(client, slug, title)
-    await message.reply_text(reply_text, reply_markup=kb, disable_web_page_preview=True)
+    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
 
 @Client.on_message(filters.command("wizard") & filters.private)
@@ -91,7 +92,7 @@ async def finish_wizard(client: Client, message: Message):
         created_by=message.from_user.id,
     )
     reply_text, kb = await _make_share_reply(client, slug, f"{session['title']} ({len(session['msg_ids'])} items)")
-    await message.reply_text(reply_text, reply_markup=kb, disable_web_page_preview=True)
+    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
 
 @Client.on_message(filters.command("batch") & filters.private)
@@ -117,7 +118,7 @@ async def batch_range_cmd(client: Client, message: Message):
         created_by=message.from_user.id,
     )
     reply_text, kb = await _make_share_reply(client, slug, title)
-    await message.reply_text(reply_text, reply_markup=kb, disable_web_page_preview=True)
+    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
 
 @Client.on_message(
@@ -155,4 +156,4 @@ async def handle_incoming_storage(client: Client, message: Message):
             mime_type=mime_type,
         )
         reply_text, kb = await _make_share_reply(client, slug, title[:120])
-        await message.reply_text(reply_text, reply_markup=kb, disable_web_page_preview=True)
+        await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
