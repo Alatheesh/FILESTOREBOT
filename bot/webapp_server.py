@@ -56,6 +56,10 @@ async def handle_app_index(request: web.Request) -> web.FileResponse:
     return web.FileResponse(STATIC_DIR / "index.html")
 
 
+async def handle_privacy_page(request: web.Request) -> web.FileResponse:
+    return web.FileResponse(STATIC_DIR / "privacy.html")
+
+
 async def api_list_items(request: web.Request) -> web.Response:
     user = _auth_user(request)
     if not user:
@@ -259,6 +263,7 @@ async def start_webapp_server(bot: Client) -> web.AppRunner:
     app.router.add_get("/", handle_health)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/app", handle_app_index)
+    app.router.add_get("/privacy", handle_privacy_page)
     app.router.add_static("/static", STATIC_DIR)
 
     app.router.add_get("/api/items", api_list_items)
