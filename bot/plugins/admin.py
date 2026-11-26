@@ -18,12 +18,23 @@ async def stats_cmd(client: Client, message: Message):
     users = await db.count_users()
     items = await db.count_items()
     auto_del = await db.get_setting("auto_delete", Config.AUTO_DELETE_SECONDS)
+    pub = await db.get_setting("public_uploads", True)
     await message.reply_text(
         f"📊 **Vault Bot Statistics**\n\n"
         f"👥 **Total Users:** `{users}`\n"
-        f"🗂 **Stored Items:** `{items}`\n"
+        f"🗂 **Total Stored Items:** `{items}`\n"
+        f"🌐 **Public Uploads:** `{pub}`\n"
         f"⏳ **Auto-Delete Timer:** `{auto_del}s`"
     )
+
+
+@Client.on_message(filters.command("publicmode") & filters.private & admin_filter)
+async def publicmode_cmd(client: Client, message: Message):
+    if len(message.command) < 2 or message.command[1].lower() not in ("on", "off"):
+        return await message.reply_text("Usage: `/publicmode on` or `/publicmode off`")
+    enabled = message.command[1].lower() == "on"
+    await db.set_setting("public_uploads", enabled)
+    await message.reply_text(f"🌐 Public multi-user uploads set to: `{enabled}`")
 
 
 @Client.on_message(filters.command("broadcast") & filters.private & admin_filter)
@@ -48,7 +59,7 @@ async def broadcast_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("ban") & filters.private & admin_filter)
 async def ban_cmd(client: Client, message: Message):
-    if len(message.command) < 2:
+    if len(message.command) < 2 or not message.command[1].isdigit():
         return await message.reply_text("Usage: `/ban <user_id>`")
     uid = int(message.command[1])
     await db.set_ban(uid, True)
@@ -57,7 +68,7 @@ async def ban_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("unban") & filters.private & admin_filter)
 async def unban_cmd(client: Client, message: Message):
-    if len(message.command) < 2:
+    if len(message.command) < 2 or not message.command[1].isdigit():
         return await message.reply_text("Usage: `/unban <user_id>`")
     uid = int(message.command[1])
     await db.set_ban(uid, False)
@@ -66,7 +77,7 @@ async def unban_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("autodel") & filters.private & admin_filter)
 async def autodel_cmd(client: Client, message: Message):
-    if len(message.command) < 2:
+    if len(message.command) < 2 or not message.command[1].isdigit():
         return await message.reply_text("Usage: `/autodel <seconds>` (use `0` to disable)")
     secs = int(message.command[1])
     await db.set_setting("auto_delete", secs)

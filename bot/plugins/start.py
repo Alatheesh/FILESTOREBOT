@@ -1,5 +1,11 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery,
+    WebAppInfo,
+)
 from pyrogram.errors import UserNotParticipant
 from bot.config import Config
 from bot.database import db
@@ -23,6 +29,26 @@ async def check_fsub(client: Client, user_id: int) -> list[dict]:
         except Exception:
             continue
     return missing
+
+
+def _home_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    if Config.WEBAPP_URL:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "📱 Open My Vault Mini App",
+                    web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/app"),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton("🔍 Search My Vault", switch_inline_query_current_chat=""),
+            InlineKeyboardButton("ℹ️ Help", callback_data="help_menu"),
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
 
 
 @Client.on_message(filters.command("start") & filters.private)
@@ -52,24 +78,17 @@ async def start_cmd(client: Client, message: Message):
 
         item = await db.get_item(payload)
         if not item:
-            return await message.reply_text("❌ Invalid or expired link.")
+            return await message.reply_text("❌ Invalid or deleted link.")
         return await deliver_item(client, message.chat.id, item)
 
-    buttons = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🔍 Search Vault", switch_inline_query_current_chat=""),
-                InlineKeyboardButton("ℹ️ Help", callback_data="help_menu"),
-            ]
-        ]
-    )
     await message.reply_text(
         f"👋 **Welcome, {user.first_name}!**\n\n"
-        "I am your personal **Telegram File & Text Vault Bot**.\n"
-        "• Send me any file, media, or text note to generate a permanent share link.\n"
-        "• Use `/batch` or `/wizard` to bundle multiple files & texts into one link.\n"
-        "• Use `/search <keyword>` to find stored items anytime.",
-        reply_markup=buttons,
+        "This is your personal **Telegram File & Text Vault** with a built-in **Mini App Manager**.\n\n"
+        "• Send any file, video, photo, or audio → Saved under your account\n"
+        "• `/text Title | Content` → Store a text note\n"
+        "• `/wizard Title` → Bundle multiple files & texts into one link\n"
+        "• Tap **Open My Vault Mini App** below to sort, rename, edit, get, share, or delete **your** stored items anytime!",
+        reply_markup=_home_keyboard(),
     )
 
 
@@ -77,16 +96,16 @@ async def start_cmd(client: Client, message: Message):
 async def help_cb(client: Client, query: CallbackQuery):
     await query.message.edit_text(
         "📖 **Available Commands**\n\n"
-        "**User & Vault Commands:**\n"
-        "• Send any file/photo/video/audio → Instant single link\n"
-        "• `/text <title> | <content>` → Store a text note & get a link\n"
-        "• `/wizard` → Step-by-step multi-file & text bundler\n"
-        "• `/batch` → Reply to start & end messages in DB channel\n"
-        "• `/search <query>` → Search saved files & texts\n"
-        "• `/request <details>` → Request a file from admins\n\n"
+        "**Personal Vault Commands (All Users):**\n"
+        "• Send any file/photo/video/audio → Instant link in your vault\n"
+        "• `/text <title> | <content>` → Store a text note\n"
+        "• `/wizard <title>` → Step-by-step multi-file & text bundler\n"
+        "• `/batch <start_id> <end_id> [Title]` → Bundle channel ID range\n"
+        "• `/search <query>` → Search your saved files & texts\n"
+        "• `/request <details>` → Send a request to admins\n\n"
         "**Admin Commands:**\n"
         "• `/stats` • `/broadcast` • `/ban` • `/unban`\n"
-        "• `/autodel <seconds>` • `/fsub <id1,id2>`",
+        "• `/autodel <seconds>` • `/fsub <id1,id2>` • `/publicmode <on|off>`",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("⬅️ Back", callback_data="back_start")]]
         ),
@@ -96,13 +115,6 @@ async def help_cb(client: Client, query: CallbackQuery):
 @Client.on_callback_query(filters.regex("^back_start$"))
 async def back_cb(client: Client, query: CallbackQuery):
     await query.message.edit_text(
-        f"👋 **Welcome back, {query.from_user.first_name}!**\n\nSend any file or use `/wizard` to store multiple files and texts.",
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("🔍 Search Vault", switch_inline_query_current_chat=""),
-                    InlineKeyboardButton("ℹ️ Help", callback_data="help_menu"),
-                ]
-            ]
-        ),
+        f"👋 **Welcome back, {query.from_user.first_name}!**\n\nSend any file or open your **Mini App Vault** to manage your stored files and texts.",
+        reply_markup=_home_keyboard(),
     )

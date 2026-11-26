@@ -17,9 +17,9 @@ async def search_cmd(client: Client, message: Message):
         return await message.reply_text("🔍 **Usage:** `/search <keyword>`")
 
     query = message.text.split(None, 1)[1].strip()
-    results = await db.search_items(query, limit=10)
+    results = await db.search_user_items(message.from_user.id, query, limit=15)
     if not results:
-        return await message.reply_text(f"😕 No stored files or texts found for `{query}`.")
+        return await message.reply_text(f"😕 No items found in your vault for `{query}`.")
 
     buttons = [
         [
@@ -31,7 +31,7 @@ async def search_cmd(client: Client, message: Message):
         for item in results
     ]
     await message.reply_text(
-        f"🔎 **Search Results for:** `{query}`",
+        f"🔎 **Your Vault Results for:** `{query}`",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -39,7 +39,7 @@ async def search_cmd(client: Client, message: Message):
 @Client.on_inline_query()
 async def inline_search(client: Client, inline_query: InlineQuery):
     query = inline_query.query.strip()
-    items = await db.search_items(query or ".*", limit=20)
+    items = await db.search_user_items(inline_query.from_user.id, query, limit=25)
     articles = []
     for item in items:
         link = f"https://t.me/{client.me.username}?start={item['slug']}"
@@ -56,4 +56,4 @@ async def inline_search(client: Client, inline_query: InlineQuery):
                 ),
             )
         )
-    await inline_query.answer(articles, cache_time=5)
+    await inline_query.answer(articles, cache_time=2, is_personal=True)
