@@ -1,6 +1,9 @@
+import asyncio
 import html
+import re
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, ChatType
+from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired, PeerIdInvalid
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup,
@@ -16,6 +19,7 @@ from bot.plugins.start import PENDING_PIN_USERS
 
 WIZARD_SESSIONS: dict[int, dict] = {}
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+MAX_CHANNEL_BATCH_SIZE = 100
 
 
 async def _is_allowed_uploader(user_id: int) -> bool:
@@ -26,15 +30,28 @@ async def _is_allowed_uploader(user_id: int) -> bool:
     return bool(await db.get_setting("public_uploads", True))
 
 
-def _extract_msg_id(token: str) -> int | None:
+def _parse_post_ref(token: str) -> tuple[int | str | None, int | None]:
+    """
+    Parses a Telegram post link or raw ID:
+    - https://t.me/c/123456789/105 -> (-100123456789, 105)
+    - https://t.me/public_channel/105 -> ("public_channel", 105)
+    - 105 -> (None, 105)
+    """
     token = token.strip().rstrip("/")
     if token.isdigit():
-        return int(token)
-    if "t.me/" in token:
-        last_part = token.split("/")[-1]
-        if last_part.isdigit():
-            return int(last_part)
-    return None
+        return None, int(token)
+
+    priv_match = re.search(r"(?:https?://)?t\.me/c/(\d+)/(\d+)", token)
+    if priv_match:
+        chat_id = int(f"-100{priv_match.group(1)}")
+        msg_id = int(priv_match.group(2))
+        return chat_id, msg_id
+
+    pub_match = re.search(r"(?:https?://)?t\.me/([A-Za-z0-9_]{4,})/(\d+)", token)
+    if pub_match and pub_match.group(1).lower() != "c":
+        return pub_match.group(1), int(pub_match.group(2))
+
+    return None, None
 
 
 def _describe_message(message: Message, fallback_index: int) -> dict:
@@ -151,7 +168,7 @@ async def start_wizard(client: Client, message: Message):
 async def cancel_wizard(client: Client, message: Message):
     if WIZARD_SESSIONS.pop(message.from_user.id, None):
         await message.reply_text(
-            f"❌ Wizard session cancelled.{Config.CREDITS_HTML}",
+            f"❌ Wizard / Batch session cancelled.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
             link_preview_options=NO_PREVIEW,
         )
@@ -163,7 +180,7 @@ async def finish_wizard(client: Client, message: Message):
     session = WIZARD_SESSIONS.pop(user.id, None)
     if not session or not session["msg_ids"]:
         return await message.reply_text(
-            f"⚠️ No items collected in your wizard session.{Config.CREDITS_HTML}",
+            f"⚠️ No items collected in your active session.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
             link_preview_options=NO_PREVIEW,
         )
@@ -199,39 +216,199 @@ async def batch_range_cmd(client: Client, message: Message):
         )
 
     args = message.command[1:]
-    start_id = _extract_msg_id(args[0]) if len(args) >= 1 else None
-    end_id = _extract_msg_id(args[1]) if len(args) >= 2 else None
+    chat1, start_id = _parse_post_ref(args[0]) if len(args) >= 1 else (None, None)
+    chat2, end_id = _parse_post_ref(args[1]) if len(args) >= 2 else (None, None)
 
-    if start_id is not None and end_id is not None and user.id in Config.ADMIN_IDS:
-        title = " ".join(args[2:]).strip() if len(args) > 2 else f"Batch {start_id}-{end_id}"
-        msg_ids = list(range(min(start_id, end_id), max(start_id, end_id) + 1))
-        sub_items = [
-            {"msg_id": mid, "title": f"Part #{idx + 1}", "type": "media"}
-            for idx, mid in enumerate(msg_ids)
-        ]
+    # Mode 1: Channel Link / Message ID Range Batching (Available to All Users!)
+    if start_id is not None and end_id is not None:
+        source_chat = chat1 or chat2
+
+        # Raw numeric IDs without channel links are only valid for Bot Admins (referencing DB_CHANNEL_ID)
+        if source_chat is None:
+            if user.id not in Config.ADMIN_IDS:
+                return await message.reply_text(
+                    "⚠️ <b>Channel Post Links Required</b>\n\n"
+                    "Please pass full Telegram post links for the first and last message:\n"
+                    "• <b>Public Channel:</b> <code>/batch https://t.me/channel/10 https://t.me/channel/25 My Title</code>\n"
+                    "• <b>Private Channel:</b> Add this bot as an <b>Admin</b> in your private channel first, then use <code>/batch https://t.me/c/123456/10 https://t.me/c/123456/25 My Title</code>"
+                    f"{Config.CREDITS_HTML}",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=NO_PREVIEW,
+                )
+            source_chat = Config.DB_CHANNEL_ID
+        elif chat1 and chat2 and str(chat1).lower() != str(chat2).lower():
+            return await message.reply_text(
+                f"❌ Both post links must belong to the <b>same channel</b>.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+
+        low_id, high_id = min(start_id, end_id), max(start_id, end_id)
+        total_range = high_id - low_id + 1
+        if total_range > MAX_CHANNEL_BATCH_SIZE:
+            return await message.reply_text(
+                f"⚠️ Maximum <b>{MAX_CHANNEL_BATCH_SIZE}</b> messages per batch (you requested <code>{total_range}</code>).{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+
+        # Resolve target channel & verify permissions (Public vs Private)
+        try:
+            chat_info = await client.get_chat(source_chat)
+        except (ChannelPrivate, ChatAdminRequired, PeerIdInvalid):
+            return await message.reply_text(
+                "🔒 <b>Private Channel Access Required!</b>\n\n"
+                "I cannot read posts from this private channel yet.\n"
+                "<b>How to fix:</b>\n"
+                f"1. Open your private channel → <b>Administrators</b> → <b>Add Admin</b> → select <code>@{client.me.username}</code>.\n"
+                "2. Grant it basic channel permissions and send the <code>/batch</code> links again!"
+                f"{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+        except Exception as e:
+            return await message.reply_text(
+                f"❌ Could not access that channel: <code>{html.escape(str(e))}</code>{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+
+        # If it is a private channel (no public username), verify both bot admin status & user membership/admin rights
+        is_private_channel = not bool(getattr(chat_info, "username", None))
+        if is_private_channel and source_chat != Config.DB_CHANNEL_ID:
+            try:
+                bot_member = await client.get_chat_member(chat_info.id, "me")
+                if bot_member.status.name not in ("ADMINISTRATOR", "OWNER"):
+                    raise ChatAdminRequired
+            except Exception:
+                return await message.reply_text(
+                    "🔒 <b>Admin Permission Needed in Private Channel</b>\n\n"
+                    f"Please promote <code>@{client.me.username}</code> to <b>Administrator</b> in <b>{html.escape(chat_info.title or 'your private channel')}</b> so it can read and copy the batch posts."
+                    f"{Config.CREDITS_HTML}",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=NO_PREVIEW,
+                )
+
+            # Verify the requesting user is actually a member/admin of that private channel
+            try:
+                user_member = await client.get_chat_member(chat_info.id, user.id)
+                if user_member.status.name in ("BANNED", "LEFT"):
+                    raise UserNotParticipant
+            except Exception:
+                return await message.reply_text(
+                    f"🚫 You must be a member/admin of <b>{html.escape(chat_info.title or 'this private channel')}</b> to batch its files.{Config.CREDITS_HTML}",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=NO_PREVIEW,
+                )
+
+        title = " ".join(args[2:]).strip() if len(args) > 2 else f"{chat_info.title or 'Batch'} ({low_id}-{high_id})"
+
+        # Fast-path if Bot Admin is referencing Config.DB_CHANNEL_ID directly
+        if chat_info.id == Config.DB_CHANNEL_ID:
+            msg_ids = list(range(low_id, high_id + 1))
+            sub_items = [
+                {"msg_id": mid, "title": f"Part #{idx + 1}", "type": "media"}
+                for idx, mid in enumerate(msg_ids)
+            ]
+            slug = await db.save_item(
+                item_type="batch",
+                message_ids=msg_ids,
+                title=title[:120],
+                created_by=user.id,
+                owner_name=user.first_name or "",
+                sub_items=sub_items,
+            )
+            reply_text, kb = await _make_share_reply(client, slug, title[:120])
+            return await message.reply_text(
+                reply_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+
+        # Copy posts from the user's public/private channel into DB_CHANNEL_ID so their vault stays permanent & editable
+        status_msg = await message.reply_text(
+            f"⏳ <b>Importing {total_range} post(s)</b> from <b>{html.escape(chat_info.title or 'channel')}</b> into your vault...{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+
+        copied_ids: list[int] = []
+        sub_items: list[dict] = []
+        target_ids = list(range(low_id, high_id + 1))
+
+        try:
+            fetched_msgs = await client.get_messages(chat_info.id, target_ids)
+            if not isinstance(fetched_msgs, list):
+                fetched_msgs = [fetched_msgs]
+        except Exception as e:
+            return await status_msg.edit_text(
+                f"❌ Failed to read channel posts: <code>{html.escape(str(e))}</code>{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+
+        for src_msg in fetched_msgs:
+            if not src_msg or src_msg.empty or src_msg.service:
+                continue
+            try:
+                copied = await src_msg.copy(Config.DB_CHANNEL_ID)
+                idx = len(copied_ids) + 1
+                meta = _describe_message(src_msg, idx)
+                copied_ids.append(copied.id)
+                sub_items.append(
+                    {"msg_id": copied.id, "title": meta["title"], "type": meta["type"]}
+                )
+                await asyncio.sleep(0.35)
+            except FloodWait as e:
+                await asyncio.sleep(e.value + 1)
+                try:
+                    copied = await src_msg.copy(Config.DB_CHANNEL_ID)
+                    idx = len(copied_ids) + 1
+                    meta = _describe_message(src_msg, idx)
+                    copied_ids.append(copied.id)
+                    sub_items.append(
+                        {"msg_id": copied.id, "title": meta["title"], "type": meta["type"]}
+                    )
+                except Exception:
+                    continue
+            except Exception:
+                continue
+
+        if not copied_ids:
+            return await status_msg.edit_text(
+                "⚠️ No copyable media or text posts were found in that message range (or the channel has content-saving restrictions enabled)."
+                f"{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
 
         slug = await db.save_item(
             item_type="batch",
-            message_ids=msg_ids,
+            message_ids=copied_ids,
             title=title[:120],
             created_by=user.id,
             owner_name=user.first_name or "",
             sub_items=sub_items,
         )
-        reply_text, kb = await _make_share_reply(client, slug, title[:120])
-        return await message.reply_text(
+        reply_text, kb = await _make_share_reply(
+            client, slug, f"{title[:120]} ({len(copied_ids)} items)"
+        )
+        return await status_msg.edit_text(
             reply_text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
             link_preview_options=NO_PREVIEW,
         )
 
+    # Mode 2: Interactive Wizard Collector (Works identically to /wizard when given a title)
     title = " ".join(args).strip() if args else "Untitled Bundle"
     WIZARD_SESSIONS[user.id] = {"title": title[:120], "msg_ids": [], "sub_items": []}
     await message.reply_text(
         f"🧙‍♂️ <b>Interactive Batch Started</b> (<code>{html.escape(title[:120])}</code>)\n\n"
-        "Forward or send all the <b>files, videos, photos, or text messages</b> you want to bundle.\n"
-        "• Type <code>/done</code> when finished to save into your vault.\n"
+        "• Forward or send all the <b>files, videos, photos, or text messages</b> you want to bundle, then type <code>/done</code>.\n"
+        "• Or use <b>Channel Link Mode</b> anytime:\n"
+        "  <code>/batch https://t.me/channel/10 https://t.me/channel/25 Bundle Title</code>\n"
         f"• Type <code>/cancel</code> to abort.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
         link_preview_options=NO_PREVIEW,
