@@ -66,6 +66,12 @@ async def api_list_items(request: web.Request) -> web.Response:
         return web.json_response({"error": "Unauthorized Telegram session"}, status=401)
 
     user_id = int(user["id"])
+    if not await db.has_accepted_terms(user_id):
+        return web.json_response(
+            {"error": "Please send /start to the bot and accept the Privacy Policy first."},
+            status=403,
+        )
+
     q = request.query.get("q", "").strip()
     item_type = request.query.get("type", "all").strip()
     sort_by = request.query.get("sort", "newest").strip()
@@ -93,8 +99,11 @@ async def api_update_item(request: web.Request) -> web.Response:
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
 
-    slug = request.match_info["slug"]
     user_id = int(user["id"])
+    if not await db.has_accepted_terms(user_id):
+        return web.json_response({"error": "Accept Privacy Policy in bot first"}, status=403)
+
+    slug = request.match_info["slug"]
     body = await request.json()
 
     existing = await db.get_item(slug)
@@ -152,9 +161,11 @@ async def api_delete_item(request: web.Request) -> web.Response:
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
 
-    slug = request.match_info["slug"]
     user_id = int(user["id"])
+    if not await db.has_accepted_terms(user_id):
+        return web.json_response({"error": "Accept Privacy Policy in bot first"}, status=403)
 
+    slug = request.match_info["slug"]
     deleted = await db.delete_user_item(slug=slug, user_id=user_id)
     if not deleted:
         return web.json_response(

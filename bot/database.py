@@ -180,14 +180,14 @@ class MultiDatabaseManager:
         )
 
     async def has_accepted_terms(self, user_id: int) -> bool:
-        if user_id in Config.ADMIN_IDS:
+        if int(user_id) in Config.ADMIN_IDS:
             return True
-        doc = await self.primary_db["users"].find_one({"user_id": user_id}, {"accepted_terms": 1})
-        return bool(doc and doc.get("accepted_terms"))
+        doc = await self.primary_db["users"].find_one({"user_id": int(user_id)}, {"accepted_terms": 1})
+        return bool(doc and doc.get("accepted_terms") is True)
 
     async def accept_terms(self, user_id: int):
         await self.primary_db["users"].update_one(
-            {"user_id": user_id},
+            {"user_id": int(user_id)},
             {
                 "$set": {
                     "accepted_terms": True,
@@ -198,12 +198,12 @@ class MultiDatabaseManager:
         )
 
     async def is_banned(self, user_id: int) -> bool:
-        doc = await self.primary_db["users"].find_one({"user_id": user_id}, {"banned": 1})
+        doc = await self.primary_db["users"].find_one({"user_id": int(user_id)}, {"banned": 1})
         return bool(doc and doc.get("banned"))
 
     async def set_ban(self, user_id: int, banned: bool):
         await self.primary_db["users"].update_one(
-            {"user_id": user_id}, {"$set": {"banned": banned}}, upsert=True
+            {"user_id": int(user_id)}, {"$set": {"banned": banned}}, upsert=True
         )
 
     async def get_all_users(self):
