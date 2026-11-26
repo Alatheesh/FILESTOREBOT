@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>My Telegram Vault</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="vault-header">
+      <div class="header-top">
+        <div>
+          <h1 id="vaultTitle">My Vault</h1>
+          <p class="subtitle" id="vaultStats">Loading your personal files...</p>
+        </div>
+        <button class="icon-btn" id="refreshBtn" title="Refresh">↻</button>
+      </div>
+
+      <!-- Search & Sort Controls -->
+      <div class="controls-row">
+        <input type="search" id="searchInput" placeholder="Search your files, batches, notes..." autocomplete="off" />
+        <select id="sortSelect" aria-label="Sort items">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="name_asc">Name A–Z</option>
+          <option value="name_desc">Name Z–A</option>
+          <option value="downloads">Most Opened</option>
+        </select>
+      </div>
+
+      <!-- Category Filter Pills -->
+      <div class="filter-pills" id="filterPills">
+        <button class="pill active" data-type="all">All</button>
+        <button class="pill" data-type="single">Files</button>
+        <button class="pill" data-type="batch">Batches</button>
+        <button class="pill" data-type="text">Texts</button>
+      </div>
+    </header>
+
+    <!-- Items List -->
+    <main id="itemsList" class="items-list">
+      <div class="empty-state">Loading your stored items...</div>
+    </main>
+  </div>
+
+  <!-- Edit / Rename Modal -->
+  <div id="editModal" class="modal hidden">
+    <div class="modal-card">
+      <h2 id="modalHeading">Edit Item</h2>
+      <label class="field-label" for="editTitleInput">Title / Name</label>
+      <input type="text" id="editTitleInput" maxlength="120" />
+
+      <div id="editTextGroup" class="hidden">
+        <label class="field-label" for="editTextContent">Text Content</label>
+        <textarea id="editTextContent" rows="6"></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="cancelEditBtn">Cancel</button>
+        <button class="btn btn-primary" id="saveEditBtn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
