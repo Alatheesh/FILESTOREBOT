@@ -102,7 +102,6 @@ async def help_cb(client: Client, query: CallbackQuery):
         "• `/wizard <title>` → Step-by-step multi-file & text bundler\n"
         "• `/batch <start_id> <end_id> [Title]` → Bundle channel ID range\n"
         "• `/search <query>` → Search your saved files & texts\n"
-        "• `/request <details>` → Send a request to admins\n\n"
         "**Admin Commands:**\n"
         "• `/stats` • `/broadcast` • `/ban` • `/unban`\n"
         "• `/autodel <seconds>` • `/fsub <id1,id2>` • `/publicmode <on|off>`",
