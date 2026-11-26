@@ -9,7 +9,10 @@ from pyrogram.types import (
 from pyrogram.errors import UserNotParticipant
 from bot.config import Config
 from bot.database import db
-from bot.delivery import deliver_item
+from bot.delivery import deliver_item, check_item_availability, destroy_expired_item
+
+# Temporary state for users entering a 4-digit PIN: {user_id: slug}
+PENDING_PIN_USERS: dict[int, str] = {}
 
 
 async def check_fsub(client: Client, user_id: int) -> list[dict]:
@@ -55,6 +58,7 @@ def _home_keyboard() -> InlineKeyboardMarkup:
 async def start_cmd(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
+    PENDING_PIN_USERS.pop(user.id, None)
 
     if await db.is_banned(user.id):
         return await message.reply_text("🚫 You are banned from using this bot.")
@@ -79,6 +83,26 @@ async def start_cmd(client: Client, message: Message):
         item = await db.get_item(payload)
         if not item:
             return await message.reply_text("❌ Invalid or deleted link.")
+
+        # Check expiration & max download limits
+        available, reason = check_item_availability(item, user.id)
+        if not available:
+            await destroy_expired_item(client, item)
+            if reason == "expired":
+                return await message.reply_text("⌛ **Link Expired:** This link has passed its 24-hour expiration window and was automatically removed.")
+            return await message.reply_text("💥 **Self-Destructed:** This link reached its maximum view/download limit.")
+
+        # Check 4-digit PIN lock (owner bypasses PIN)
+        pin_code = item.get("pin_code", "")
+        is_owner = int(item.get("created_by", 0)) == int(user.id)
+        if pin_code and not is_owner:
+            PENDING_PIN_USERS[user.id] = payload
+            return await message.reply_text(
+                f"🔐 **PIN Protected Link**\n\n"
+                f"📌 **Title:** `{item['title']}`\n"
+                "Please reply with the **4-digit PIN** to unlock and receive this item:"
+            )
+
         return await deliver_item(client, message.chat.id, item)
 
     await message.reply_text(
@@ -87,7 +111,7 @@ async def start_cmd(client: Client, message: Message):
         "• Send any file, video, photo, or audio → Saved under your account\n"
         "• `/text Title | Content` → Store a text note\n"
         "• `/wizard Title` → Bundle multiple files & texts into one link\n"
-        "• Tap **Open My Vault Mini App** below to sort, rename, edit, get, share, or delete **your** stored items anytime!",
+        "• Tap **Open My Vault Mini App** below to inspect batches, set PIN/expiring links, preview media, generate QR codes, or delete your items!",
         reply_markup=_home_keyboard(),
     )
 
@@ -101,7 +125,11 @@ async def help_cb(client: Client, query: CallbackQuery):
         "• `/text <title> | <content>` → Store a text note\n"
         "• `/wizard <title>` → Step-by-step multi-file & text bundler\n"
         "• `/batch <start_id> <end_id> [Title]` → Bundle channel ID range\n"
-        "• `/search <query>` → Search your saved files & texts\n"
+        "• `/search <query>` → Search your saved files & texts\n\n"
+        "**Mini App Features (`/app`):**\n"
+        "• ⚙️ **Link Rules:** 24h auto-expire, 4-digit PIN lock, or 1-time self-destruct\n"
+        "• 📦 **Batch Inspector:** Reorder, remove, or fetch single items from a batch\n"
+        "• 👁 **Media Preview & QR Codes:** Preview photos/audio & scan QR to transfer\n\n"
         "**Admin Commands:**\n"
         "• `/stats` • `/broadcast` • `/ban` • `/unban`\n"
         "• `/autodel <seconds>` • `/fsub <id1,id2>` • `/publicmode <on|off>`",
