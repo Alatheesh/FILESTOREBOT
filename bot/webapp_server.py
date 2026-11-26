@@ -1,11 +1,13 @@
 import hashlib
 import hmac
+import html
 import json
 from pathlib import Path
 from urllib.parse import parse_qsl
 import aiohttp
 from aiohttp import web
 from pyrogram import Client
+from pyrogram.enums import ParseMode
 from bot.config import Config
 from bot.database import db
 from bot.delivery import deliver_item
@@ -43,13 +45,11 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
 
 def _auth_user(request: web.Request) -> dict | None:
     init_data = request.headers.get("X-Telegram-Init-Data", "")
-    if not init_data:
-        init_data = request.query.get("initData", "")
     return verify_telegram_init_data(init_data)
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok", "service": "telegram-vault-bot-v3"})
+    return web.json_response({"status": "ok", "service": "telegram-vault-bot-safe"})
 
 
 async def handle_app_index(request: web.Request) -> web.FileResponse:
@@ -69,7 +69,7 @@ async def api_list_items(request: web.Request) -> web.Response:
     items = await db.get_user_items(
         user_id=user_id, query=q, item_type=item_type, sort_by=sort_by
     )
-    bot_username = request.app["bot"].me.username
+    bot_me = request.app["bot"].me
     return web.json_response(
         {
             "user": {
@@ -77,7 +77,8 @@ async def api_list_items(request: web.Request) -> web.Response:
                 "first_name": user.get("first_name", ""),
                 "username": user.get("username", ""),
             },
-            "bot_username": bot_username,
+            "bot_name": bot_me.first_name or "Vault Bot",
+            "bot_username": bot_me.username,
             "items": items,
         }
     )
@@ -96,7 +97,6 @@ async def api_update_item(request: web.Request) -> web.Response:
     if not existing or int(existing.get("created_by", 0)) != user_id:
         return web.json_response({"error": "Item not found or access denied"}, status=403)
 
-    # If user removed specific sub-items from a batch, delete ONLY those removed messages from DB_CHANNEL_ID
     new_sub_items = body.get("sub_items")
     removed_msg_ids: list[int] = []
     if isinstance(new_sub_items, list):
@@ -134,7 +134,8 @@ async def api_update_item(request: web.Request) -> web.Response:
             await bot.edit_message_text(
                 chat_id=Config.DB_CHANNEL_ID,
                 message_id=updated["message_ids"][0],
-                text=f"📝 **{updated['title']}**\n\n{updated.get('text_content', '')}",
+                text=f"📝 <b>{html.escape(updated['title'])}</b>\n\n{html.escape(updated.get('text_content', ''))}",
+                parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
@@ -195,41 +196,6 @@ async def api_deliver_item(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message": "Sent to your Telegram chat!"})
 
 
-async def api_preview_media(request: web.Request) -> web.Response:
-    user = _auth_user(request)
-    if not user:
-        return web.Response(status=401, text="Unauthorized")
-
-    slug = request.match_info["slug"]
-    user_id = int(user["id"])
-    item = await db.get_item(slug)
-    if not item or int(item.get("created_by", 0)) != user_id:
-        return web.Response(status=403, text="Forbidden")
-
-    msg_id_param = request.query.get("msg_id")
-    target_msg_id = int(msg_id_param) if msg_id_param and msg_id_param.isdigit() else item["message_ids"][0]
-
-    bot: Client = request.app["bot"]
-    try:
-        msg = await bot.get_messages(Config.DB_CHANNEL_ID, target_msg_id)
-        if not msg or not msg.media:
-            return web.Response(status=404, text="No previewable media")
-
-        # Cap in-app streaming preview at 15 MB to protect Hugging Face RAM
-        media_obj = getattr(msg, msg.media.value, None)
-        size = getattr(media_obj, "file_size", 0) or 0
-        if size > 15 * 1024 * 1024:
-            return web.Response(status=413, text="File too large for inline preview")
-
-        mime = getattr(media_obj, "mime_type", None) or (
-            "image/jpeg" if msg.photo else "application/octet-stream"
-        )
-        file_bytes = await bot.download_media(msg, in_memory=True)
-        return web.Response(body=file_bytes.getvalue(), content_type=mime)
-    except Exception as e:
-        return web.Response(status=500, text=str(e))
-
-
 async def api_prepare_share(request: web.Request) -> web.Response:
     user = _auth_user(request)
     if not user:
@@ -244,6 +210,7 @@ async def api_prepare_share(request: web.Request) -> web.Response:
     bot_username = request.app["bot"].me.username
     deep_link = f"https://t.me/{bot_username}?start={slug}"
     pin_note = " 🔐 (PIN Protected)" if item.get("pin_code") else ""
+    safe_title = html.escape(item["title"])
 
     payload = {
         "user_id": user_id,
@@ -253,7 +220,11 @@ async def api_prepare_share(request: web.Request) -> web.Response:
             "title": item["title"],
             "description": f"Vault {item['type'].upper()}{pin_note} • Tap to open in @{bot_username}",
             "input_message_content": {
-                "message_text": f"📦 <b>{item['title']}</b>{pin_note}\n\n🔗 <a href='{deep_link}'>Open in Vault Bot</a>",
+                "message_text": (
+                    f"📦 <b>{safe_title}</b>{pin_note}\n\n"
+                    f"🔗 <a href='{deep_link}'>Open in Vault Bot</a>"
+                    f"{Config.CREDITS_HTML}"
+                ),
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
@@ -294,7 +265,6 @@ async def start_webapp_server(bot: Client) -> web.AppRunner:
     app.router.add_patch("/api/items/{slug}", api_update_item)
     app.router.add_delete("/api/items/{slug}", api_delete_item)
     app.router.add_post("/api/deliver/{slug}", api_deliver_item)
-    app.router.add_get("/api/preview/{slug}", api_preview_media)
     app.router.add_post("/api/prepare-share/{slug}", api_prepare_share)
 
     runner = web.AppRunner(app)

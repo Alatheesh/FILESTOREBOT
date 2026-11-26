@@ -34,3 +34,10 @@ class Config:
     SHORTENER_DOMAIN: str = os.environ.get("SHORTENER_DOMAIN", "")
 
     PORT: int = int(os.environ.get("PORT", 7860))
+
+    # Global HTML Credits Footer
+    CREDITS_HTML: str = (
+        '\n\n━━━━━━━━━━━━━━━━━━━━\n'
+        'BY [-_-] <a href="https://t.me/llathu63035">NTM</a> • '
+        'By <a href="https://t.me/TG_LATHEESH"><b>LATHEESH</b></a>'
+    )
