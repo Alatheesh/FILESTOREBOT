@@ -1,9 +1,10 @@
+import html
 from pyrogram import Client, filters
+from pyrogram.enums import ParseMode
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    LinkPreviewOptions,
     WebAppInfo,
 )
 from bot.config import Config
@@ -12,9 +13,7 @@ from bot.shortener import shorten_url
 from bot.delivery import deliver_item, check_item_availability, destroy_expired_item
 from bot.plugins.start import PENDING_PIN_USERS
 
-# {user_id: {"title": str, "msg_ids": list[int], "sub_items": list[dict]}}
 WIZARD_SESSIONS: dict[int, dict] = {}
-NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def _is_allowed_uploader(user_id: int) -> bool:
@@ -54,10 +53,12 @@ def _describe_message(message: Message, fallback_index: int) -> dict:
 async def _make_share_reply(client: Client, slug: str, title: str) -> tuple[str, InlineKeyboardMarkup]:
     direct_url = f"https://t.me/{client.me.username}?start={slug}"
     final_url = await shorten_url(direct_url)
+    safe_title = html.escape(title)
     text = (
-        f"✅ **Stored in Your Vault!**\n\n"
-        f"📌 **Title:** `{title}`\n"
-        f"🔗 **Link:** {final_url}"
+        f"✅ <b>Stored in Your Vault!</b>\n\n"
+        f"📌 <b>Title:</b> <code>{safe_title}</code>\n"
+        f"🔗 <b>Link:</b> {final_url}"
+        f"{Config.CREDITS_HTML}"
     )
     rows = [
         [
@@ -82,17 +83,25 @@ async def store_text_cmd(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
     if not await _is_allowed_uploader(user.id):
-        return await message.reply_text("🔒 Uploads are currently restricted.")
+        return await message.reply_text(
+            f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     raw = message.text.split(None, 1)[1] if len(message.command) > 1 else ""
     if "|" not in raw:
         return await message.reply_text(
-            "📝 **Usage:** `/text Note Title | Your full text content here`"
+            f"📝 <b>Usage:</b> <code>/text Note Title | Your full text content here</code>{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
     title, content = [part.strip() for part in raw.split("|", 1)]
     copied = await client.send_message(
-        Config.DB_CHANNEL_ID, f"📝 **{title}**\n\n{content}"
+        Config.DB_CHANNEL_ID,
+        f"📝 <b>{html.escape(title)}</b>\n\n{html.escape(content)}",
+        parse_mode=ParseMode.HTML,
     )
     slug = await db.save_item(
         item_type="text",
@@ -105,7 +114,12 @@ async def store_text_cmd(client: Client, message: Message):
         sub_items=[{"msg_id": copied.id, "title": title[:90], "type": "text"}],
     )
     reply_text, kb = await _make_share_reply(client, slug, title[:120])
-    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
+    await message.reply_text(
+        reply_text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 @Client.on_message(filters.command("wizard") & filters.private)
@@ -113,22 +127,32 @@ async def start_wizard(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
     if not await _is_allowed_uploader(user.id):
-        return await message.reply_text("🔒 Uploads are currently restricted.")
+        return await message.reply_text(
+            f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     title = message.text.split(None, 1)[1].strip() if len(message.command) > 1 else "Untitled Bundle"
     WIZARD_SESSIONS[user.id] = {"title": title[:120], "msg_ids": [], "sub_items": []}
     await message.reply_text(
-        f"🧙‍♂️ **Batch Wizard Started** (`{title[:120]}`)\n\n"
-        "Send as many **files, videos, photos, audio, or text messages** as you want.\n"
-        "• Send `/done` when finished to save into your Mini App Vault.\n"
-        "• Send `/cancel` to abort."
+        f"🧙‍♂️ <b>Batch Wizard Started</b> (<code>{html.escape(title[:120])}</code>)\n\n"
+        "Send as many <b>files, videos, photos, audio, or text messages</b> as you want.\n"
+        "• Send <code>/done</code> when finished to save into your Mini App Vault.\n"
+        f"• Send <code>/cancel</code> to abort.{Config.CREDITS_HTML}",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
 
 @Client.on_message(filters.command("cancel") & filters.private)
 async def cancel_wizard(client: Client, message: Message):
     if WIZARD_SESSIONS.pop(message.from_user.id, None):
-        await message.reply_text("❌ Wizard session cancelled.")
+        await message.reply_text(
+            f"❌ Wizard session cancelled.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 @Client.on_message(filters.command("done") & filters.private)
@@ -136,7 +160,11 @@ async def finish_wizard(client: Client, message: Message):
     user = message.from_user
     session = WIZARD_SESSIONS.pop(user.id, None)
     if not session or not session["msg_ids"]:
-        return await message.reply_text("⚠️ No items collected in your wizard session.")
+        return await message.reply_text(
+            f"⚠️ No items collected in your wizard session.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     slug = await db.save_item(
         item_type="batch",
@@ -149,7 +177,12 @@ async def finish_wizard(client: Client, message: Message):
     reply_text, kb = await _make_share_reply(
         client, slug, f"{session['title']} ({len(session['msg_ids'])} items)"
     )
-    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
+    await message.reply_text(
+        reply_text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 @Client.on_message(filters.command("batch") & filters.private)
@@ -157,7 +190,11 @@ async def batch_range_cmd(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
     if not await _is_allowed_uploader(user.id):
-        return await message.reply_text("🔒 Uploads are currently restricted.")
+        return await message.reply_text(
+            f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     args = message.command[1:]
     start_id = _extract_msg_id(args[0]) if len(args) >= 1 else None
@@ -180,15 +217,22 @@ async def batch_range_cmd(client: Client, message: Message):
             sub_items=sub_items,
         )
         reply_text, kb = await _make_share_reply(client, slug, title[:120])
-        return await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
+        return await message.reply_text(
+            reply_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     title = " ".join(args).strip() if args else "Untitled Bundle"
     WIZARD_SESSIONS[user.id] = {"title": title[:120], "msg_ids": [], "sub_items": []}
     await message.reply_text(
-        f"🧙‍♂️ **Interactive Batch Started** (`{title[:120]}`)\n\n"
-        "Forward or send all the **files, videos, photos, or text messages** you want to bundle.\n"
-        "• Type `/done` when finished to save into your vault.\n"
-        "• Type `/cancel` to abort."
+        f"🧙‍♂️ <b>Interactive Batch Started</b> (<code>{html.escape(title[:120])}</code>)\n\n"
+        "Forward or send all the <b>files, videos, photos, or text messages</b> you want to bundle.\n"
+        "• Type <code>/done</code> when finished to save into your vault.\n"
+        f"• Type <code>/cancel</code> to abort.{Config.CREDITS_HTML}",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
 
@@ -198,6 +242,7 @@ async def batch_range_cmd(client: Client, message: Message):
         [
             "start",
             "help",
+            "about",
             "text",
             "wizard",
             "done",
@@ -218,32 +263,46 @@ async def handle_incoming_storage(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
 
-    # 1. Check if user is answering a 4-digit PIN prompt
     if user.id in PENDING_PIN_USERS and message.text:
         entered_pin = message.text.strip()
         slug = PENDING_PIN_USERS.get(user.id)
         item = await db.get_item(slug) if slug else None
         if not item:
             PENDING_PIN_USERS.pop(user.id, None)
-            return await message.reply_text("❌ This link is no longer available.")
+            return await message.reply_text(
+                f"❌ This link is no longer available.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
         available, _ = check_item_availability(item, user.id)
         if not available:
             PENDING_PIN_USERS.pop(user.id, None)
             await destroy_expired_item(client, item)
-            return await message.reply_text("⌛ This link has expired or reached its view limit.")
+            return await message.reply_text(
+                f"⌛ This link has expired or reached its view limit.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
         if entered_pin == item.get("pin_code"):
             PENDING_PIN_USERS.pop(user.id, None)
-            await message.reply_text("🔓 **PIN Verified!** Delivering your item...")
+            await message.reply_text(
+                f"🔓 <b>PIN Verified!</b> Delivering your item...{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
             return await deliver_item(client, message.chat.id, item)
         else:
-            return await message.reply_text("❌ **Incorrect PIN.** Try again or send `/start` to cancel.")
+            return await message.reply_text(
+                f"❌ <b>Incorrect PIN.</b> Try again or send <code>/start</code> to cancel.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
     if not await _is_allowed_uploader(user.id):
         return
 
-    # 2. Active Wizard / Batch session collector
     if user.id in WIZARD_SESSIONS:
         copied = await message.copy(Config.DB_CHANNEL_ID)
         idx = len(WIZARD_SESSIONS[user.id]["msg_ids"]) + 1
@@ -253,10 +312,11 @@ async def handle_incoming_storage(client: Client, message: Message):
             {"msg_id": copied.id, "title": meta["title"], "type": meta["type"]}
         )
         return await message.reply_text(
-            f"➕ Added **{meta['title']}** (#{idx}) to bundle. Send more or type `/done`."
+            f"➕ Added <b>{html.escape(meta['title'])}</b> (#{idx}) to bundle. Send more or type <code>/done</code>.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
-    # 3. Single Media Auto-Store
     if message.media:
         copied = await message.copy(Config.DB_CHANNEL_ID)
         media_obj = getattr(message, message.media.value, None)
@@ -279,4 +339,9 @@ async def handle_incoming_storage(client: Client, message: Message):
             sub_items=[{"msg_id": copied.id, "title": title[:90], "type": message.media.value}],
         )
         reply_text, kb = await _make_share_reply(client, slug, title[:120])
-        await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
+        await message.reply_text(
+            reply_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )

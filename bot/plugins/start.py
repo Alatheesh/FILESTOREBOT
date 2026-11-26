@@ -1,4 +1,6 @@
+import html
 from pyrogram import Client, filters
+from pyrogram.enums import ParseMode
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup,
@@ -11,7 +13,6 @@ from bot.config import Config
 from bot.database import db
 from bot.delivery import deliver_item, check_item_availability, destroy_expired_item
 
-# Temporary state for users entering a 4-digit PIN: {user_id: slug}
 PENDING_PIN_USERS: dict[int, str] = {}
 
 
@@ -47,11 +48,60 @@ def _home_keyboard() -> InlineKeyboardMarkup:
         )
     rows.append(
         [
-            InlineKeyboardButton("🔍 Search My Vault", switch_inline_query_current_chat=""),
-            InlineKeyboardButton("ℹ️ Help", callback_data="help_menu"),
+            InlineKeyboardButton("🔍 Search Vault", switch_inline_query_current_chat=""),
+            InlineKeyboardButton("📖 Help", callback_data="help_menu"),
+            InlineKeyboardButton("ℹ️ About", callback_data="about_menu"),
         ]
     )
     return InlineKeyboardMarkup(rows)
+
+
+def _welcome_text(first_name: str) -> str:
+    safe_name = html.escape(first_name or "Friend")
+    return (
+        f"👋 <b>Welcome, {safe_name}!</b>\n\n"
+        "Your personal <b>Telegram File &amp; Text Vault</b> with an integrated <b>Mini App Manager</b>.\n\n"
+        "• Send any <b>file, video, photo, or audio</b> → Saved to your vault\n"
+        "• <code>/text Title | Content</code> → Save a formatted text note\n"
+        "• <code>/wizard Title</code> → Bundle multiple files &amp; texts into one link\n"
+        "• Tap <b>Open My Vault Mini App</b> below to sort, rename, set PIN/expiring links, inspect batches, generate QR codes, or delete your items!"
+        f"{Config.CREDITS_HTML}"
+    )
+
+
+def _help_text() -> str:
+    return (
+        "📖 <b>Vault Bot — Command Guide</b>\n\n"
+        "<b>👤 Personal Vault Commands (All Users)</b>\n"
+        "• <b>Send any Media/File</b> → Instant link in your vault\n"
+        "• <code>/text Title | Content</code> → Store a text note\n"
+        "• <code>/wizard Title</code> → Multi-file &amp; text bundler\n"
+        "• <code>/done</code> • <code>/cancel</code> → Finish or abort active wizard\n"
+        "• <code>/batch Title</code> → Interactive bundle collector\n"
+        "• <code>/search keyword</code> → Search your saved items\n"
+        "• <code>/about</code> → Bot info &amp; credits\n\n"
+        "<b>📱 Mini App Features</b>\n"
+        "• ⚙️ <b>Link Rules:</b> 24h auto-expire, 4-digit PIN lock, or 1-time self-destruct\n"
+        "• 📂 <b>Batch Inspector:</b> Reorder, remove, or fetch single items from a batch\n"
+        "• 📱 <b>QR Codes &amp; Share:</b> Instant QR code &amp; native Telegram chat sharing\n\n"
+        "<b>🛡️ Admin Commands</b>\n"
+        "• <code>/stats</code> • <code>/broadcast</code> • <code>/publicmode on|off</code>\n"
+        "• <code>/ban id</code> • <code>/unban id</code> • <code>/autodel sec</code> • <code>/fsub ids</code>"
+        f"{Config.CREDITS_HTML}"
+    )
+
+
+def _about_text(bot_name: str, bot_username: str) -> str:
+    safe_bot = html.escape(bot_name or "Vault Bot")
+    return (
+        "ℹ️ <b>About This Bot</b>\n\n"
+        f"• <b>Name :</b> {safe_bot} (@{bot_username})\n"
+        '• <b>Powered by :</b> <a href="https://t.me/llathu63035">NTM</a>\n'
+        '• <b>Build by :</b> <a href="https://t.me/TG_LATHEESH"><b>LATHEESH</b></a>\n'
+        "• <b>Server :</b> <code>secret</code> 🔒\n\n"
+        "✨ <i>Enjoy fast, private, zero-load cloud storage!</i>"
+        f"{Config.CREDITS_HTML}"
+    )
 
 
 @Client.on_message(filters.command("start") & filters.private)
@@ -61,7 +111,11 @@ async def start_cmd(client: Client, message: Message):
     PENDING_PIN_USERS.pop(user.id, None)
 
     if await db.is_banned(user.id):
-        return await message.reply_text("🚫 You are banned from using this bot.")
+        return await message.reply_text(
+            f"🚫 You are banned from using this bot.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     payload = message.command[1] if len(message.command) > 1 else None
 
@@ -76,72 +130,121 @@ async def start_cmd(client: Client, message: Message):
                 [InlineKeyboardButton("✅ Try Again", url=f"https://t.me/{client.me.username}?start={payload}")]
             )
             return await message.reply_text(
-                "⚠️ **Join Required**\n\nPlease join our channel(s) below first, then click **Try Again** to get your file/text.",
+                "⚠️ <b>Join Required</b>\n\nPlease join our channel(s) below first, then click <b>Try Again</b> to receive your file/text."
+                f"{Config.CREDITS_HTML}",
                 reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
             )
 
         item = await db.get_item(payload)
         if not item:
-            return await message.reply_text("❌ Invalid or deleted link.")
+            return await message.reply_text(
+                f"❌ Invalid or deleted link.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
-        # Check expiration & max download limits
         available, reason = check_item_availability(item, user.id)
         if not available:
             await destroy_expired_item(client, item)
             if reason == "expired":
-                return await message.reply_text("⌛ **Link Expired:** This link has passed its 24-hour expiration window and was automatically removed.")
-            return await message.reply_text("💥 **Self-Destructed:** This link reached its maximum view/download limit.")
+                return await message.reply_text(
+                    f"⌛ <b>Link Expired:</b> This link has passed its expiration window and was automatically removed.{Config.CREDITS_HTML}",
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            return await message.reply_text(
+                f"💥 <b>Self-Destructed:</b> This link reached its maximum view/download limit.{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
-        # Check 4-digit PIN lock (owner bypasses PIN)
         pin_code = item.get("pin_code", "")
         is_owner = int(item.get("created_by", 0)) == int(user.id)
         if pin_code and not is_owner:
             PENDING_PIN_USERS[user.id] = payload
             return await message.reply_text(
-                f"🔐 **PIN Protected Link**\n\n"
-                f"📌 **Title:** `{item['title']}`\n"
-                "Please reply with the **4-digit PIN** to unlock and receive this item:"
+                f"🔐 <b>PIN Protected Link</b>\n\n"
+                f"📌 <b>Title:</b> <code>{html.escape(item['title'])}</code>\n"
+                f"Please reply with the <b>4-digit PIN</b> to unlock and receive this item:{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
             )
 
         return await deliver_item(client, message.chat.id, item)
 
     await message.reply_text(
-        f"👋 **Welcome, {user.first_name}!**\n\n"
-        "This is your personal **Telegram File & Text Vault** with a built-in **Mini App Manager**.\n\n"
-        "• Send any file, video, photo, or audio → Saved under your account\n"
-        "• `/text Title | Content` → Store a text note\n"
-        "• `/wizard Title` → Bundle multiple files & texts into one link\n"
-        "• Tap **Open My Vault Mini App** below to inspect batches, set PIN/expiring links, preview media, generate QR codes, or delete your items!",
+        _welcome_text(user.first_name or ""),
         reply_markup=_home_keyboard(),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+@Client.on_message(filters.command("help") & filters.private)
+async def help_cmd(client: Client, message: Message):
+    await message.reply_text(
+        _help_text(),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Back to Home", callback_data="back_start")]]
+        ),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+@Client.on_message(filters.command("about") & filters.private)
+async def about_cmd(client: Client, message: Message):
+    await message.reply_text(
+        _about_text(client.me.first_name, client.me.username),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Back to Home", callback_data="back_start")]]
+        ),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
 
 @Client.on_callback_query(filters.regex("^help_menu$"))
 async def help_cb(client: Client, query: CallbackQuery):
     await query.message.edit_text(
-        "📖 **Available Commands**\n\n"
-        "**Personal Vault Commands (All Users):**\n"
-        "• Send any file/photo/video/audio → Instant link in your vault\n"
-        "• `/text <title> | <content>` → Store a text note\n"
-        "• `/wizard <title>` → Step-by-step multi-file & text bundler\n"
-        "• `/batch <start_id> <end_id> [Title]` → Bundle channel ID range\n"
-        "• `/search <query>` → Search your saved files & texts\n\n"
-        "**Mini App Features (`/app`):**\n"
-        "• ⚙️ **Link Rules:** 24h auto-expire, 4-digit PIN lock, or 1-time self-destruct\n"
-        "• 📦 **Batch Inspector:** Reorder, remove, or fetch single items from a batch\n"
-        "• 👁 **Media Preview & QR Codes:** Preview photos/audio & scan QR to transfer\n\n"
-        "**Admin Commands:**\n"
-        "• `/stats` • `/broadcast` • `/ban` • `/unban`\n"
-        "• `/autodel <seconds>` • `/fsub <id1,id2>` • `/publicmode <on|off>`",
+        _help_text(),
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ Back", callback_data="back_start")]]
+            [
+                [
+                    InlineKeyboardButton("ℹ️ About", callback_data="about_menu"),
+                    InlineKeyboardButton("⬅️ Back", callback_data="back_start"),
+                ]
+            ]
         ),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+@Client.on_callback_query(filters.regex("^about_menu$"))
+async def about_cb(client: Client, query: CallbackQuery):
+    await query.message.edit_text(
+        _about_text(client.me.first_name, client.me.username),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("📖 Help", callback_data="help_menu"),
+                    InlineKeyboardButton("⬅️ Back", callback_data="back_start"),
+                ]
+            ]
+        ),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
 
 @Client.on_callback_query(filters.regex("^back_start$"))
 async def back_cb(client: Client, query: CallbackQuery):
     await query.message.edit_text(
-        f"👋 **Welcome back, {query.from_user.first_name}!**\n\nSend any file or open your **Mini App Vault** to manage your stored files and texts.",
+        _welcome_text(query.from_user.first_name or ""),
         reply_markup=_home_keyboard(),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )

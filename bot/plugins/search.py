@@ -10,6 +10,7 @@ from pyrogram.types import (
     InlineKeyboardButton,
     LinkPreviewOptions,
 )
+from bot.config import Config
 from bot.database import db
 
 
@@ -17,16 +18,18 @@ from bot.database import db
 async def search_cmd(client: Client, message: Message):
     if len(message.command) < 2:
         return await message.reply_text(
-            "🔍 <b>Usage:</b> <code>/search &lt;keyword&gt;</code>",
+            f"🔍 <b>Usage:</b> <code>/search &lt;keyword&gt;</code>{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
     query = message.text.split(None, 1)[1].strip()
     results = await db.search_user_items(message.from_user.id, query, limit=15)
     if not results:
         return await message.reply_text(
-            f"😕 No items found in your vault for <code>{html.escape(query)}</code>.",
+            f"😕 No items found in your vault for <code>{html.escape(query)}</code>.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
     buttons = [
@@ -39,9 +42,10 @@ async def search_cmd(client: Client, message: Message):
         for item in results
     ]
     await message.reply_text(
-        f"🔎 <b>Your Vault Results for:</b> <code>{html.escape(query)}</code>",
+        f"🔎 <b>Your Vault Results for:</b> <code>{html.escape(query)}</code>{Config.CREDITS_HTML}",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
 
@@ -58,7 +62,7 @@ async def inline_search(client: Client, inline_query: InlineQuery):
                 title=item["title"],
                 description=f"Type: {item['type'].upper()} • Downloads: {item.get('downloads', 0)}",
                 input_message_content=InputTextMessageContent(
-                    f"📦 <b>{safe_title}</b>\n🔗 <a href='{link}'>Click Here to Open</a>",
+                    f"📦 <b>{safe_title}</b>\n🔗 <a href='{link}'>Click Here to Open</a>{Config.CREDITS_HTML}",
                     parse_mode=ParseMode.HTML,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 ),
