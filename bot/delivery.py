@@ -4,8 +4,11 @@ import html
 from pyrogram import Client
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait
+from pyrogram.types import LinkPreviewOptions
 from bot.config import Config
 from bot.database import db
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def _schedule_delete(client: Client, chat_id: int, message_ids: list[int], delay: int):
@@ -70,7 +73,7 @@ async def deliver_item(
             chat_id=chat_id,
             text=f"📝 <b>{safe_title}</b>\n\n{safe_body}{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
             protect_content=protect,
         )
         sent_ids.append(msg.id)
@@ -113,7 +116,7 @@ async def deliver_item(
                 f"<b>{mins} min(s)</b>. Save or forward them now.{Config.CREDITS_HTML}"
             ),
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
         sent_ids.append(warn.id)
         asyncio.create_task(_schedule_delete(client, chat_id, sent_ids, int(auto_del)))
