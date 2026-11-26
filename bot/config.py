@@ -15,6 +15,8 @@ class Config:
     API_HASH: str = os.environ.get("API_HASH", "")
     BOT_TOKEN: str = os.environ.get("BOT_TOKEN", "")
 
+    WEBAPP_URL: str = os.environ.get("WEBAPP_URL", "").rstrip("/")
+
     DB_CHANNEL_ID: int = int(os.environ.get("DB_CHANNEL_ID", 0))
     OWNER_ID: int = int(os.environ.get("OWNER_ID", 0))
     ADMIN_IDS: list[int] = list(

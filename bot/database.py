@@ -15,7 +15,8 @@ class Database:
     async def init_indexes(self):
         await self.users.create_index("user_id", unique=True)
         await self.items.create_index("slug", unique=True)
-        await self.items.create_index([("title", "text"), ("tags", "text")])
+        await self.items.create_index([("created_by", 1), ("created_at", -1)])
+        await self.items.create_index([("created_by", 1), ("title", 1)])
 
     # --- Users ---
     async def add_user(self, user_id: int, first_name: str = ""):
@@ -48,6 +49,7 @@ class Database:
         message_ids: list[int],
         title: str,
         created_by: int,
+        owner_name: str = "",
         text_content: str = "",
         file_size: int = 0,
         mime_type: str = "",
@@ -62,7 +64,8 @@ class Database:
                 "text_content": text_content,
                 "file_size": file_size,
                 "mime_type": mime_type,
-                "created_by": created_by,
+                "created_by": int(created_by),
+                "owner_name": owner_name,
                 "downloads": 0,
                 "created_at": datetime.datetime.utcnow(),
             }
@@ -75,10 +78,73 @@ class Database:
     async def increment_downloads(self, slug: str):
         await self.items.update_one({"slug": slug}, {"$inc": {"downloads": 1}})
 
-    async def search_items(self, query: str, limit: int = 15) -> list[dict]:
-        cursor = self.items.find(
-            {"title": {"$regex": query, "$options": "i"}}
-        ).sort("created_at", -1).limit(limit)
+    # Strictly scoped to ONE user's stored items
+    async def get_user_items(
+        self,
+        user_id: int,
+        query: str = "",
+        item_type: str = "all",
+        sort_by: str = "newest",
+        limit: int = 200,
+    ) -> list[dict]:
+        filt: dict = {"created_by": int(user_id)}
+        if query:
+            filt["title"] = {"$regex": query, "$options": "i"}
+        if item_type in ("single", "batch", "text"):
+            filt["type"] = item_type
+
+        sort_map = {
+            "newest": [("created_at", -1)],
+            "oldest": [("created_at", 1)],
+            "name_asc": [("title", 1)],
+            "name_desc": [("title", -1)],
+            "downloads": [("downloads", -1)],
+        }
+        sort_spec = sort_map.get(sort_by, [("created_at", -1)])
+
+        cursor = self.items.find(filt, {"_id": 0}).sort(sort_spec).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        for d in docs:
+            if isinstance(d.get("created_at"), datetime.datetime):
+                d["created_at"] = d["created_at"].isoformat() + "Z"
+        return docs
+
+    async def update_user_item(
+        self,
+        slug: str,
+        user_id: int,
+        title: str | None = None,
+        text_content: str | None = None,
+    ) -> dict | None:
+        updates: dict = {}
+        if title is not None and title.strip():
+            updates["title"] = title.strip()[:120]
+        if text_content is not None:
+            updates["text_content"] = text_content
+        if not updates:
+            return await self.items.find_one({"slug": slug, "created_by": int(user_id)}, {"_id": 0})
+
+        res = await self.items.find_one_and_update(
+            {"slug": slug, "created_by": int(user_id)},
+            {"$set": updates},
+            projection={"_id": 0},
+            return_document=True,
+        )
+        if res and isinstance(res.get("created_at"), datetime.datetime):
+            res["created_at"] = res["created_at"].isoformat() + "Z"
+        return res
+
+    async def delete_user_item(self, slug: str, user_id: int) -> dict | None:
+        # Atomically finds and deletes ONLY if created_by matches user_id
+        return await self.items.find_one_and_delete(
+            {"slug": slug, "created_by": int(user_id)}
+        )
+
+    async def search_user_items(self, user_id: int, query: str, limit: int = 15) -> list[dict]:
+        filt: dict = {"created_by": int(user_id)}
+        if query:
+            filt["title"] = {"$regex": query, "$options": "i"}
+        cursor = self.items.find(filt).sort("created_at", -1).limit(limit)
         return await cursor.to_list(length=limit)
 
     async def count_items(self) -> int:
