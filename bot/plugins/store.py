@@ -6,6 +6,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     WebAppInfo,
+    LinkPreviewOptions,
 )
 from bot.config import Config
 from bot.database import db
@@ -14,6 +15,7 @@ from bot.delivery import deliver_item, check_item_availability, destroy_expired_
 from bot.plugins.start import PENDING_PIN_USERS
 
 WIZARD_SESSIONS: dict[int, dict] = {}
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def _is_allowed_uploader(user_id: int) -> bool:
@@ -86,7 +88,7 @@ async def store_text_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     raw = message.text.split(None, 1)[1] if len(message.command) > 1 else ""
@@ -94,7 +96,7 @@ async def store_text_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"📝 <b>Usage:</b> <code>/text Note Title | Your full text content here</code>{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     title, content = [part.strip() for part in raw.split("|", 1)]
@@ -118,7 +120,7 @@ async def store_text_cmd(client: Client, message: Message):
         reply_text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -130,7 +132,7 @@ async def start_wizard(client: Client, message: Message):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     title = message.text.split(None, 1)[1].strip() if len(message.command) > 1 else "Untitled Bundle"
@@ -141,7 +143,7 @@ async def start_wizard(client: Client, message: Message):
         "• Send <code>/done</code> when finished to save into your Mini App Vault.\n"
         f"• Send <code>/cancel</code> to abort.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -151,7 +153,7 @@ async def cancel_wizard(client: Client, message: Message):
         await message.reply_text(
             f"❌ Wizard session cancelled.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
 
@@ -163,7 +165,7 @@ async def finish_wizard(client: Client, message: Message):
         return await message.reply_text(
             f"⚠️ No items collected in your wizard session.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     slug = await db.save_item(
@@ -181,7 +183,7 @@ async def finish_wizard(client: Client, message: Message):
         reply_text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -193,7 +195,7 @@ async def batch_range_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     args = message.command[1:]
@@ -221,7 +223,7 @@ async def batch_range_cmd(client: Client, message: Message):
             reply_text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     title = " ".join(args).strip() if args else "Untitled Bundle"
@@ -232,7 +234,7 @@ async def batch_range_cmd(client: Client, message: Message):
         "• Type <code>/done</code> when finished to save into your vault.\n"
         f"• Type <code>/cancel</code> to abort.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -272,7 +274,7 @@ async def handle_incoming_storage(client: Client, message: Message):
             return await message.reply_text(
                 f"❌ This link is no longer available.{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         available, _ = check_item_availability(item, user.id)
@@ -282,7 +284,7 @@ async def handle_incoming_storage(client: Client, message: Message):
             return await message.reply_text(
                 f"⌛ This link has expired or reached its view limit.{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         if entered_pin == item.get("pin_code"):
@@ -290,14 +292,14 @@ async def handle_incoming_storage(client: Client, message: Message):
             await message.reply_text(
                 f"🔓 <b>PIN Verified!</b> Delivering your item...{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
             return await deliver_item(client, message.chat.id, item)
         else:
             return await message.reply_text(
                 f"❌ <b>Incorrect PIN.</b> Try again or send <code>/start</code> to cancel.{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
     if not await _is_allowed_uploader(user.id):
@@ -314,7 +316,7 @@ async def handle_incoming_storage(client: Client, message: Message):
         return await message.reply_text(
             f"➕ Added <b>{html.escape(meta['title'])}</b> (#{idx}) to bundle. Send more or type <code>/done</code>.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     if message.media:
@@ -343,5 +345,5 @@ async def handle_incoming_storage(client: Client, message: Message):
             reply_text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )

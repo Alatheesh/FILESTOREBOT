@@ -2,10 +2,12 @@ import asyncio
 import html
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
-from pyrogram.types import Message
+from pyrogram.types import Message, LinkPreviewOptions
 from pyrogram.errors import FloodWait
 from bot.config import Config
 from bot.database import db
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 def admin_only(_, __, message: Message) -> bool:
@@ -29,7 +31,7 @@ async def stats_cmd(client: Client, message: Message):
         f"⏳ <b>Auto-Delete Timer:</b> <code>{auto_del}s</code>"
         f"{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -39,14 +41,14 @@ async def publicmode_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"Usage: <code>/publicmode on</code> or <code>/publicmode off</code>{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     enabled = message.command[1].lower() == "on"
     await db.set_setting("public_uploads", enabled)
     await message.reply_text(
         f"🌐 Public multi-user uploads set to: <code>{enabled}</code>{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -56,7 +58,7 @@ async def broadcast_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"📢 Reply to any message with <code>/broadcast</code> to send it to all users.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     status = await message.reply_text("⏳ Broadcasting...")
@@ -74,7 +76,7 @@ async def broadcast_cmd(client: Client, message: Message):
     await status.edit_text(
         f"✅ <b>Broadcast Complete</b>\n• Sent: <code>{sent}</code>\n• Failed: <code>{failed}</code>{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -84,14 +86,14 @@ async def ban_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"Usage: <code>/ban &lt;user_id&gt;</code>{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     uid = int(message.command[1])
     await db.set_ban(uid, True)
     await message.reply_text(
         f"🚫 User <code>{uid}</code> has been banned.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -101,14 +103,14 @@ async def unban_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"Usage: <code>/unban &lt;user_id&gt;</code>{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     uid = int(message.command[1])
     await db.set_ban(uid, False)
     await message.reply_text(
         f"✅ User <code>{uid}</code> has been unbanned.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -118,14 +120,14 @@ async def autodel_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"Usage: <code>/autodel &lt;seconds&gt;</code> (use <code>0</code> to disable){Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     secs = int(message.command[1])
     await db.set_setting("auto_delete", secs)
     await message.reply_text(
         f"⏳ Auto-delete timer updated to <code>{secs}</code> seconds.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -135,7 +137,7 @@ async def fsub_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"Usage: <code>/fsub -100111,-100222</code> (or <code>/fsub off</code>){Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     arg = message.command[1].strip()
     if arg.lower() == "off":
@@ -143,12 +145,12 @@ async def fsub_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"🔓 Force-Subscribe disabled.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
     ids = [int(x.strip()) for x in arg.split(",") if x.strip().lstrip("-").isdigit()]
     await db.set_setting("fsub_channels", ids)
     await message.reply_text(
         f"🔒 Force-Subscribe channels updated: <code>{html.escape(str(ids))}</code>{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )

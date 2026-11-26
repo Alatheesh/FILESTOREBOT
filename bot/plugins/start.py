@@ -7,6 +7,7 @@ from pyrogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
     WebAppInfo,
+    LinkPreviewOptions,
 )
 from pyrogram.errors import UserNotParticipant
 from bot.config import Config
@@ -14,6 +15,7 @@ from bot.database import db
 from bot.delivery import deliver_item, check_item_availability, destroy_expired_item
 
 PENDING_PIN_USERS: dict[int, str] = {}
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def check_fsub(client: Client, user_id: int) -> list[dict]:
@@ -114,7 +116,7 @@ async def start_cmd(client: Client, message: Message):
         return await message.reply_text(
             f"🚫 You are banned from using this bot.{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     payload = message.command[1] if len(message.command) > 1 else None
@@ -134,7 +136,7 @@ async def start_cmd(client: Client, message: Message):
                 f"{Config.CREDITS_HTML}",
                 reply_markup=InlineKeyboardMarkup(buttons),
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         item = await db.get_item(payload)
@@ -142,7 +144,7 @@ async def start_cmd(client: Client, message: Message):
             return await message.reply_text(
                 f"❌ Invalid or deleted link.{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         available, reason = check_item_availability(item, user.id)
@@ -152,12 +154,12 @@ async def start_cmd(client: Client, message: Message):
                 return await message.reply_text(
                     f"⌛ <b>Link Expired:</b> This link has passed its expiration window and was automatically removed.{Config.CREDITS_HTML}",
                     parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+                    link_preview_options=NO_PREVIEW,
                 )
             return await message.reply_text(
                 f"💥 <b>Self-Destructed:</b> This link reached its maximum view/download limit.{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         pin_code = item.get("pin_code", "")
@@ -169,7 +171,7 @@ async def start_cmd(client: Client, message: Message):
                 f"📌 <b>Title:</b> <code>{html.escape(item['title'])}</code>\n"
                 f"Please reply with the <b>4-digit PIN</b> to unlock and receive this item:{Config.CREDITS_HTML}",
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=NO_PREVIEW,
             )
 
         return await deliver_item(client, message.chat.id, item)
@@ -178,7 +180,7 @@ async def start_cmd(client: Client, message: Message):
         _welcome_text(user.first_name or ""),
         reply_markup=_home_keyboard(),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -190,7 +192,7 @@ async def help_cmd(client: Client, message: Message):
             [[InlineKeyboardButton("⬅️ Back to Home", callback_data="back_start")]]
         ),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -202,7 +204,7 @@ async def about_cmd(client: Client, message: Message):
             [[InlineKeyboardButton("⬅️ Back to Home", callback_data="back_start")]]
         ),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -219,7 +221,7 @@ async def help_cb(client: Client, query: CallbackQuery):
             ]
         ),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -236,7 +238,7 @@ async def about_cb(client: Client, query: CallbackQuery):
             ]
         ),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
 
 
@@ -246,5 +248,5 @@ async def back_cb(client: Client, query: CallbackQuery):
         _welcome_text(query.from_user.first_name or ""),
         reply_markup=_home_keyboard(),
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        link_preview_options=NO_PREVIEW,
     )
