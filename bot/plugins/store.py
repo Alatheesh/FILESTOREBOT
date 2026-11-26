@@ -15,11 +15,25 @@ from bot.config import Config
 from bot.database import db
 from bot.shortener import shorten_url
 from bot.delivery import deliver_item, check_item_availability, destroy_expired_item
-from bot.plugins.start import PENDING_PIN_USERS
+from bot.plugins.start import PENDING_PIN_USERS, consent_prompt_payload
 
 WIZARD_SESSIONS: dict[int, dict] = {}
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 MAX_CHANNEL_BATCH_SIZE = 100
+
+
+async def _ensure_terms_accepted(message: Message) -> bool:
+    user = message.from_user
+    if await db.has_accepted_terms(user.id):
+        return True
+    text, kb = consent_prompt_payload(user.first_name or "")
+    await message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML,
+        link_preview_options=NO_PREVIEW,
+    )
+    return False
 
 
 async def _notify_failover_if_needed(client: Client, alert_html: str):
@@ -110,6 +124,8 @@ async def _make_share_reply(client: Client, slug: str, title: str) -> tuple[str,
 async def store_text_cmd(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
+    if not await _ensure_terms_accepted(message):
+        return
     if not await _is_allowed_uploader(user.id):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
@@ -155,6 +171,8 @@ async def store_text_cmd(client: Client, message: Message):
 async def start_wizard(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
+    if not await _ensure_terms_accepted(message):
+        return
     if not await _is_allowed_uploader(user.id):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
@@ -187,6 +205,8 @@ async def cancel_wizard(client: Client, message: Message):
 @Client.on_message(filters.command("done") & filters.private)
 async def finish_wizard(client: Client, message: Message):
     user = message.from_user
+    if not await _ensure_terms_accepted(message):
+        return
     session = WIZARD_SESSIONS.pop(user.id, None)
     if not session or not session["msg_ids"]:
         return await message.reply_text(
@@ -219,6 +239,8 @@ async def finish_wizard(client: Client, message: Message):
 async def batch_range_cmd(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
+    if not await _ensure_terms_accepted(message):
+        return
     if not await _is_allowed_uploader(user.id):
         return await message.reply_text(
             f"🔒 Uploads are currently restricted.{Config.CREDITS_HTML}",
@@ -451,6 +473,7 @@ async def handle_incoming_storage(client: Client, message: Message):
     user = message.from_user
     await db.add_user(user.id, user.first_name or "")
 
+    # 1. PIN verification prompt takes priority if user is unlocking a shared link
     if user.id in PENDING_PIN_USERS and message.text:
         entered_pin = message.text.strip()
         slug = PENDING_PIN_USERS.get(user.id)
@@ -488,9 +511,14 @@ async def handle_incoming_storage(client: Client, message: Message):
                 link_preview_options=NO_PREVIEW,
             )
 
+    # 2. Enforce Privacy Policy & Terms acceptance before ANY storage or interaction
+    if not await _ensure_terms_accepted(message):
+        return
+
     if not await _is_allowed_uploader(user.id):
         return
 
+    # 3. Active Wizard / Batch collector
     if user.id in WIZARD_SESSIONS:
         copied = await message.copy(Config.DB_CHANNEL_ID)
         idx = len(WIZARD_SESSIONS[user.id]["msg_ids"]) + 1
@@ -505,6 +533,7 @@ async def handle_incoming_storage(client: Client, message: Message):
             link_preview_options=NO_PREVIEW,
         )
 
+    # 4. Single Media Auto-Store
     if message.media:
         copied = await message.copy(Config.DB_CHANNEL_ID)
         media_obj = getattr(message, message.media.value, None)
