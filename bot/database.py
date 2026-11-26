@@ -164,13 +164,35 @@ class MultiDatabaseManager:
         await self.set_setting("extra_mongo_uris", extra_uris)
         return True, f"Added as DB #{new_idx + 1} ({info['used_mb']} MB used)"
 
-    # --- Users ---
+    # --- Users & Terms Consent ---
     async def add_user(self, user_id: int, first_name: str = ""):
         await self.primary_db["users"].update_one(
             {"user_id": user_id},
             {
                 "$set": {"first_name": first_name, "last_seen": datetime.datetime.utcnow()},
-                "$setOnInsert": {"joined_at": datetime.datetime.utcnow(), "banned": False},
+                "$setOnInsert": {
+                    "joined_at": datetime.datetime.utcnow(),
+                    "banned": False,
+                    "accepted_terms": False,
+                },
+            },
+            upsert=True,
+        )
+
+    async def has_accepted_terms(self, user_id: int) -> bool:
+        if user_id in Config.ADMIN_IDS:
+            return True
+        doc = await self.primary_db["users"].find_one({"user_id": user_id}, {"accepted_terms": 1})
+        return bool(doc and doc.get("accepted_terms"))
+
+    async def accept_terms(self, user_id: int):
+        await self.primary_db["users"].update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "accepted_terms": True,
+                    "accepted_terms_at": datetime.datetime.utcnow(),
+                }
             },
             upsert=True,
         )
