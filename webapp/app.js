@@ -9,23 +9,24 @@ if (tg) {
 
 let state = {
   items: [],
+  botName: "Vault Bot",
   botUsername: "",
   filterType: "all",
   editingSlug: null,
   expandedBatches: {},
   activeQrUrl: "",
-  activePreviewSlug: null,
 };
 
 const els = {
   vaultTitle: document.getElementById("vaultTitle"),
   vaultStats: document.getElementById("vaultStats"),
   pinHomeBtn: document.getElementById("pinHomeBtn"),
+  refreshBtn: document.getElementById("refreshBtn"),
+  aboutBtn: document.getElementById("aboutBtn"),
   searchInput: document.getElementById("searchInput"),
   sortSelect: document.getElementById("sortSelect"),
   filterPills: document.getElementById("filterPills"),
   itemsList: document.getElementById("itemsList"),
-  refreshBtn: document.getElementById("refreshBtn"),
   editModal: document.getElementById("editModal"),
   editTitleInput: document.getElementById("editTitleInput"),
   editTextGroup: document.getElementById("editTextGroup"),
@@ -43,25 +44,35 @@ const els = {
   qrCanvas: document.getElementById("qrCanvas"),
   closeQrBtn: document.getElementById("closeQrBtn"),
   copyQrLinkBtn: document.getElementById("copyQrLinkBtn"),
-  previewModal: document.getElementById("previewModal"),
-  previewTitle: document.getElementById("previewTitle"),
-  previewContainer: document.getElementById("previewContainer"),
-  closePreviewBtn: document.getElementById("closePreviewBtn"),
-  sendFromPreviewBtn: document.getElementById("sendFromPreviewBtn"),
+  aboutModal: document.getElementById("aboutModal"),
+  aboutBotName: document.getElementById("aboutBotName"),
+  closeAboutBtn: document.getElementById("closeAboutBtn"),
   toast: document.getElementById("toast"),
 };
 
-// Show Home Screen Shortcut button if supported by client
-if (tg?.addToHomeScreen) {
-  els.pinHomeBtn.classList.remove("hidden");
-  els.pinHomeBtn.onclick = () => {
+// Bottom Dock Actions
+els.pinHomeBtn.onclick = () => {
+  haptic("light");
+  if (tg?.addToHomeScreen) {
     try {
       tg.addToHomeScreen();
     } catch (_) {
-      showToast("Home screen shortcut not supported on this device");
+      showToast("Home screen shortcut is not supported on this device");
     }
-  };
-}
+  } else {
+    showToast("Open in mobile Telegram app to pin to Home Screen");
+  }
+};
+
+els.aboutBtn.onclick = () => {
+  haptic("light");
+  els.aboutBotName.textContent = state.botUsername
+    ? `${state.botName} (@${state.botUsername})`
+    : state.botName;
+  els.aboutModal.classList.remove("hidden");
+};
+
+els.closeAboutBtn.onclick = () => els.aboutModal.classList.add("hidden");
 
 function showToast(msg) {
   els.toast.textContent = msg;
@@ -84,6 +95,7 @@ function readCache() {
       const parsed = JSON.parse(raw);
       state.items = parsed.items || [];
       state.botUsername = parsed.botUsername || "";
+      state.botName = parsed.botName || "Vault Bot";
       if (state.items.length) renderItems();
     }
   } catch (_) {}
@@ -94,6 +106,7 @@ function readCache() {
           const parsed = JSON.parse(val);
           state.items = parsed.items || [];
           state.botUsername = parsed.botUsername || "";
+          state.botName = parsed.botName || "Vault Bot";
           renderItems();
         } catch (_) {}
       }
@@ -101,8 +114,8 @@ function readCache() {
   }
 }
 
-function writeCache(items, botUsername) {
-  const payload = JSON.stringify({ items, botUsername });
+function writeCache(items, botUsername, botName) {
+  const payload = JSON.stringify({ items, botUsername, botName });
   try {
     localStorage.setItem("vault_items_cache", payload);
   } catch (_) {}
@@ -146,8 +159,9 @@ async function loadItems() {
     const data = await apiFetch(`/api/items?q=${q}&type=${type}&sort=${sort}`);
     state.items = data.items || [];
     state.botUsername = data.bot_username || "";
+    state.botName = data.bot_name || "Vault Bot";
     if (!q && type === "all") {
-      writeCache(state.items, state.botUsername);
+      writeCache(state.items, state.botUsername, state.botName);
     }
     const ownerName = data.user?.first_name ? `${data.user.first_name}'s Vault` : "My Vault";
     els.vaultTitle.textContent = ownerName;
@@ -178,7 +192,6 @@ function renderItems() {
         : "";
       const metaParts = [countLabel, `${item.downloads || 0} opens`, dateStr].filter(Boolean);
 
-      // Rule Badges
       let ruleBadges = "";
       if (item.pin_code) ruleBadges += `<span class="badge rule-badge">🔐 PIN</span>`;
       if (item.expires_at) ruleBadges += `<span class="badge rule-badge">⌛ EXP</span>`;
@@ -189,7 +202,6 @@ function renderItems() {
           ? `<div class="text-preview">${escapeHtml(item.text_content)}</div>`
           : "";
 
-      // Batch Drawer HTML
       const isExpanded = !!state.expandedBatches[item.slug];
       let batchDrawerHtml = "";
       if (item.type === "batch" && isExpanded) {
@@ -210,13 +222,11 @@ function renderItems() {
         batchDrawerHtml = `<div class="batch-drawer">${rows}</div>`;
       }
 
-      // 3rd Button: Inspect Batch OR Preview Media OR Copy Text
-      let thirdBtn = `<button class="act-btn" onclick="copyLink('${item.slug}')">🔗 Copy</button>`;
-      if (item.type === "batch") {
-        thirdBtn = `<button class="act-btn" onclick="toggleBatchDrawer('${item.slug}')">${isExpanded ? "▲ Hide" : "📂 Items"}</button>`;
-      } else if (item.type === "single" && (item.mime_type?.startsWith("image/") || item.mime_type?.startsWith("audio/") || item.mime_type?.startsWith("video/"))) {
-        thirdBtn = `<button class="act-btn" onclick="openMediaPreview('${item.slug}')">👁 View</button>`;
-      }
+      // Safe Mode 3rd Button: Inspect Batch OR Copy Link (zero server RAM load)
+      const thirdBtn =
+        item.type === "batch"
+          ? `<button class="act-btn" onclick="toggleBatchDrawer('${item.slug}')">${isExpanded ? "▲ Hide" : "📂 Items"}</button>`
+          : `<button class="act-btn" onclick="copyLink('${item.slug}')">🔗 Copy</button>`;
 
       return `
       <div class="item-card" data-slug="${item.slug}">
@@ -346,40 +356,6 @@ els.copyQrLinkBtn.onclick = async () => {
   }
 };
 
-// --- In-App Media Preview ---
-window.openMediaPreview = function (slug) {
-  haptic("light");
-  const item = state.items.find((x) => x.slug === slug);
-  if (!item) return;
-  state.activePreviewSlug = slug;
-  els.previewTitle.textContent = item.title;
-
-  const streamUrl = `/api/preview/${slug}?initData=${encodeURIComponent(tg?.initData || "")}`;
-  const mime = item.mime_type || "";
-
-  if (mime.startsWith("image/")) {
-    els.previewContainer.innerHTML = `<img src="${streamUrl}" alt="Preview" onerror="this.parentElement.textContent='Preview unavailable (file >15MB)'" />`;
-  } else if (mime.startsWith("audio/")) {
-    els.previewContainer.innerHTML = `<audio controls autoplay src="${streamUrl}"></audio>`;
-  } else if (mime.startsWith("video/")) {
-    els.previewContainer.innerHTML = `<video controls playsinline src="${streamUrl}"></video>`;
-  } else {
-    els.previewContainer.textContent = "Preview not supported for this file format.";
-  }
-  els.previewModal.classList.remove("hidden");
-};
-
-els.closePreviewBtn.onclick = () => {
-  els.previewContainer.innerHTML = "";
-  els.previewModal.classList.add("hidden");
-};
-els.sendFromPreviewBtn.onclick = () => {
-  if (state.activePreviewSlug) {
-    window.deliverItem(state.activePreviewSlug);
-    els.previewModal.classList.add("hidden");
-  }
-};
-
 // --- Standard Delivery, Share, Edit & Delete ---
 window.deliverItem = async function (slug) {
   haptic("medium");
@@ -440,12 +416,10 @@ window.openEditModal = function (slug) {
     els.editTextContent.value = "";
   }
 
-  // Populate existing Link Rules
   els.rulePinInput.value = item.pin_code || "";
   els.ruleExpirySelect.value = item.expires_at ? "24" : "0";
   els.ruleMaxDownloads.value = item.max_downloads || 0;
 
-  // Auto-open Link Rules drawer if any rule is currently active
   const hasRules = !!(item.pin_code || item.expires_at || item.max_downloads > 0);
   els.rulesContent.classList.toggle("hidden", !hasRules);
   els.rulesChevron.textContent = hasRules ? "▲" : "▼";

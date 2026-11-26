@@ -10,17 +10,14 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Top Header -->
+    <!-- Clean Top Search & Filter Bar -->
     <header class="vault-header">
       <div class="header-top">
         <div>
           <h1 id="vaultTitle">My Vault</h1>
           <p class="subtitle" id="vaultStats">Loading your personal files...</p>
         </div>
-        <div class="header-actions">
-          <button class="icon-btn hidden" id="pinHomeBtn" title="Pin Vault to Home Screen">📲</button>
-          <button class="icon-btn" id="refreshBtn" title="Refresh">↻</button>
-        </div>
+        <span class="safe-pill">SAFE MODE</span>
       </div>
 
       <!-- Search & Sort Controls -->
@@ -48,7 +45,29 @@
     <main id="itemsList" class="items-list">
       <div class="empty-state">Loading your stored items...</div>
     </main>
+
+    <!-- Global Credits Footer -->
+    <footer class="credits-footer">
+      BY [-_-] <a href="https://t.me/llathu63035" target="_blank">NTM</a> •
+      By <a href="https://t.me/TG_LATHEESH" target="_blank"><strong>LATHEESH</strong></a>
+    </footer>
   </div>
+
+  <!-- Fixed Bottom Navigation Bar (Thumb-Friendly) -->
+  <nav class="bottom-dock">
+    <button class="dock-btn" id="refreshBtn">
+      <span class="dock-icon">↻</span>
+      <span>Refresh</span>
+    </button>
+    <button class="dock-btn" id="pinHomeBtn">
+      <span class="dock-icon">📲</span>
+      <span>Home Screen</span>
+    </button>
+    <button class="dock-btn" id="aboutBtn">
+      <span class="dock-icon">ℹ️</span>
+      <span>About</span>
+    </button>
+  </nav>
 
   <!-- Edit / Rename & Link Rules Modal -->
   <div id="editModal" class="modal hidden">
@@ -65,7 +84,7 @@
       <!-- Link Rules Toggle Section -->
       <div class="rules-box">
         <div class="rules-header" id="toggleRulesBtn">
-          <span>⚙️ Link Rules (PIN, Expiry & Self-Destruct)</span>
+          <span>⚙️ Link Rules (PIN, Expiry &amp; Self-Destruct)</span>
           <span id="rulesChevron">▼</span>
         </div>
         <div id="rulesContent" class="rules-body hidden">
@@ -105,14 +124,23 @@
     </div>
   </div>
 
-  <!-- In-App Media Preview Modal -->
-  <div id="previewModal" class="modal hidden">
-    <div class="modal-card">
-      <h2 id="previewTitle">Media Preview</h2>
-      <div id="previewContainer" class="preview-box">Loading preview...</div>
+  <!-- About Modal -->
+  <div id="aboutModal" class="modal hidden">
+    <div class="modal-card about-card">
+      <h2>ℹ️ About Vault Bot</h2>
+      <div class="about-rows">
+        <div class="about-row"><span>Name :</span><strong id="aboutBotName">Vault Bot</strong></div>
+        <div class="about-row"><span>Powered by :</span><a href="https://t.me/llathu63035" target="_blank">NTM</a></div>
+        <div class="about-row"><span>Build by :</span><a href="https://t.me/TG_LATHEESH" target="_blank"><strong>LATHEESH</strong></a></div>
+        <div class="about-row"><span>Server :</span><code>secret</code></div>
+      </div>
+      <p class="about-enjoy">✨ Enjoy fast, private cloud storage!</p>
+      <div class="credits-mini">
+        BY [-_-] <a href="https://t.me/llathu63035" target="_blank">NTM</a> •
+        By <a href="https://t.me/TG_LATHEESH" target="_blank"><strong>LATHEESH</strong></a>
+      </div>
       <div class="modal-actions">
-        <button class="btn btn-secondary" id="closePreviewBtn">Close</button>
-        <button class="btn btn-primary" id="sendFromPreviewBtn">📥 Send to Chat</button>
+        <button class="btn btn-primary" id="closeAboutBtn">Close</button>
       </div>
     </div>
   </div>
