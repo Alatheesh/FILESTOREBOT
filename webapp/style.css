@@ -410,6 +410,13 @@ input[type="search"] {
   color: var(--tg-theme-button-text-color, #fff);
 }
 
+.policy-link-btn {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  font-size: 0.84rem;
+}
+
 /* QR & About */
 .qr-card {
   align-items: center;
