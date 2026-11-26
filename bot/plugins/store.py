@@ -2,8 +2,8 @@ import asyncio
 import html
 import re
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode, ChatType
-from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired, PeerIdInvalid
+from pyrogram.enums import ParseMode
+from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired, PeerIdInvalid, UserNotParticipant
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup,
@@ -22,6 +22,21 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 MAX_CHANNEL_BATCH_SIZE = 100
 
 
+async def _notify_failover_if_needed(client: Client, alert_html: str):
+    if not alert_html:
+        return
+    for admin_id in Config.ADMIN_IDS:
+        try:
+            await client.send_message(
+                admin_id,
+                f"{alert_html}{Config.CREDITS_HTML}",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=NO_PREVIEW,
+            )
+        except Exception:
+            pass
+
+
 async def _is_allowed_uploader(user_id: int) -> bool:
     if await db.is_banned(user_id):
         return False
@@ -31,12 +46,6 @@ async def _is_allowed_uploader(user_id: int) -> bool:
 
 
 def _parse_post_ref(token: str) -> tuple[int | str | None, int | None]:
-    """
-    Parses a Telegram post link or raw ID:
-    - https://t.me/c/123456789/105 -> (-100123456789, 105)
-    - https://t.me/public_channel/105 -> ("public_channel", 105)
-    - 105 -> (None, 105)
-    """
     token = token.strip().rstrip("/")
     if token.isdigit():
         return None, int(token)
@@ -122,7 +131,7 @@ async def store_text_cmd(client: Client, message: Message):
         f"📝 <b>{html.escape(title)}</b>\n\n{html.escape(content)}",
         parse_mode=ParseMode.HTML,
     )
-    slug = await db.save_item(
+    slug, failover_alert = await db.save_item(
         item_type="text",
         message_ids=[copied.id],
         title=title[:120],
@@ -132,6 +141,7 @@ async def store_text_cmd(client: Client, message: Message):
         mime_type="text/plain",
         sub_items=[{"msg_id": copied.id, "title": title[:90], "type": "text"}],
     )
+    await _notify_failover_if_needed(client, failover_alert)
     reply_text, kb = await _make_share_reply(client, slug, title[:120])
     await message.reply_text(
         reply_text,
@@ -185,7 +195,7 @@ async def finish_wizard(client: Client, message: Message):
             link_preview_options=NO_PREVIEW,
         )
 
-    slug = await db.save_item(
+    slug, failover_alert = await db.save_item(
         item_type="batch",
         message_ids=session["msg_ids"],
         title=session["title"],
@@ -193,6 +203,7 @@ async def finish_wizard(client: Client, message: Message):
         owner_name=user.first_name or "",
         sub_items=session["sub_items"],
     )
+    await _notify_failover_if_needed(client, failover_alert)
     reply_text, kb = await _make_share_reply(
         client, slug, f"{session['title']} ({len(session['msg_ids'])} items)"
     )
@@ -219,11 +230,9 @@ async def batch_range_cmd(client: Client, message: Message):
     chat1, start_id = _parse_post_ref(args[0]) if len(args) >= 1 else (None, None)
     chat2, end_id = _parse_post_ref(args[1]) if len(args) >= 2 else (None, None)
 
-    # Mode 1: Channel Link / Message ID Range Batching (Available to All Users!)
     if start_id is not None and end_id is not None:
         source_chat = chat1 or chat2
 
-        # Raw numeric IDs without channel links are only valid for Bot Admins (referencing DB_CHANNEL_ID)
         if source_chat is None:
             if user.id not in Config.ADMIN_IDS:
                 return await message.reply_text(
@@ -252,7 +261,6 @@ async def batch_range_cmd(client: Client, message: Message):
                 link_preview_options=NO_PREVIEW,
             )
 
-        # Resolve target channel & verify permissions (Public vs Private)
         try:
             chat_info = await client.get_chat(source_chat)
         except (ChannelPrivate, ChatAdminRequired, PeerIdInvalid):
@@ -273,7 +281,6 @@ async def batch_range_cmd(client: Client, message: Message):
                 link_preview_options=NO_PREVIEW,
             )
 
-        # If it is a private channel (no public username), verify both bot admin status & user membership/admin rights
         is_private_channel = not bool(getattr(chat_info, "username", None))
         if is_private_channel and source_chat != Config.DB_CHANNEL_ID:
             try:
@@ -289,7 +296,6 @@ async def batch_range_cmd(client: Client, message: Message):
                     link_preview_options=NO_PREVIEW,
                 )
 
-            # Verify the requesting user is actually a member/admin of that private channel
             try:
                 user_member = await client.get_chat_member(chat_info.id, user.id)
                 if user_member.status.name in ("BANNED", "LEFT"):
@@ -303,14 +309,13 @@ async def batch_range_cmd(client: Client, message: Message):
 
         title = " ".join(args[2:]).strip() if len(args) > 2 else f"{chat_info.title or 'Batch'} ({low_id}-{high_id})"
 
-        # Fast-path if Bot Admin is referencing Config.DB_CHANNEL_ID directly
         if chat_info.id == Config.DB_CHANNEL_ID:
             msg_ids = list(range(low_id, high_id + 1))
             sub_items = [
                 {"msg_id": mid, "title": f"Part #{idx + 1}", "type": "media"}
                 for idx, mid in enumerate(msg_ids)
             ]
-            slug = await db.save_item(
+            slug, failover_alert = await db.save_item(
                 item_type="batch",
                 message_ids=msg_ids,
                 title=title[:120],
@@ -318,6 +323,7 @@ async def batch_range_cmd(client: Client, message: Message):
                 owner_name=user.first_name or "",
                 sub_items=sub_items,
             )
+            await _notify_failover_if_needed(client, failover_alert)
             reply_text, kb = await _make_share_reply(client, slug, title[:120])
             return await message.reply_text(
                 reply_text,
@@ -326,7 +332,6 @@ async def batch_range_cmd(client: Client, message: Message):
                 link_preview_options=NO_PREVIEW,
             )
 
-        # Copy posts from the user's public/private channel into DB_CHANNEL_ID so their vault stays permanent & editable
         status_msg = await message.reply_text(
             f"⏳ <b>Importing {total_range} post(s)</b> from <b>{html.escape(chat_info.title or 'channel')}</b> into your vault...{Config.CREDITS_HTML}",
             parse_mode=ParseMode.HTML,
@@ -383,7 +388,7 @@ async def batch_range_cmd(client: Client, message: Message):
                 link_preview_options=NO_PREVIEW,
             )
 
-        slug = await db.save_item(
+        slug, failover_alert = await db.save_item(
             item_type="batch",
             message_ids=copied_ids,
             title=title[:120],
@@ -391,6 +396,7 @@ async def batch_range_cmd(client: Client, message: Message):
             owner_name=user.first_name or "",
             sub_items=sub_items,
         )
+        await _notify_failover_if_needed(client, failover_alert)
         reply_text, kb = await _make_share_reply(
             client, slug, f"{title[:120]} ({len(copied_ids)} items)"
         )
@@ -401,7 +407,6 @@ async def batch_range_cmd(client: Client, message: Message):
             link_preview_options=NO_PREVIEW,
         )
 
-    # Mode 2: Interactive Wizard Collector (Works identically to /wizard when given a title)
     title = " ".join(args).strip() if args else "Untitled Bundle"
     WIZARD_SESSIONS[user.id] = {"title": title[:120], "msg_ids": [], "sub_items": []}
     await message.reply_text(
@@ -435,6 +440,10 @@ async def batch_range_cmd(client: Client, message: Message):
             "autodel",
             "fsub",
             "publicmode",
+            "dbstats",
+            "adddb",
+            "switchdb",
+            "dblimit",
         ]
     )
 )
@@ -507,7 +516,7 @@ async def handle_incoming_storage(client: Client, message: Message):
         file_size = getattr(media_obj, "file_size", 0) or 0
         mime_type = getattr(media_obj, "mime_type", "") or ""
 
-        slug = await db.save_item(
+        slug, failover_alert = await db.save_item(
             item_type="single",
             message_ids=[copied.id],
             title=title[:120],
@@ -517,6 +526,7 @@ async def handle_incoming_storage(client: Client, message: Message):
             mime_type=mime_type,
             sub_items=[{"msg_id": copied.id, "title": title[:90], "type": message.media.value}],
         )
+        await _notify_failover_if_needed(client, failover_alert)
         reply_text, kb = await _make_share_reply(client, slug, title[:120])
         await message.reply_text(
             reply_text,

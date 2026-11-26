@@ -23,13 +23,117 @@ async def stats_cmd(client: Client, message: Message):
     items = await db.count_items()
     auto_del = await db.get_setting("auto_delete", Config.AUTO_DELETE_SECONDS)
     pub = await db.get_setting("public_uploads", True)
+    db_stats = await db.get_all_db_stats()
+    active_info = next((d for d in db_stats if d["is_active"]), None)
+    active_str = (
+        f"DB #{active_info['index'] + 1} ({active_info['used_mb']} / {active_info['limit_mb']} MB)"
+        if active_info
+        else "Unknown"
+    )
     await message.reply_text(
         f"📊 <b>Vault Bot Statistics</b>\n\n"
         f"👥 <b>Total Users:</b> <code>{users}</code>\n"
         f"🗂 <b>Total Stored Items:</b> <code>{items}</code>\n"
+        f"🗄️ <b>Active Write DB:</b> <code>{active_str}</code> ({len(db_stats)} DBs in pool)\n"
         f"🌐 <b>Public Uploads:</b> <code>{pub}</code>\n"
-        f"⏳ <b>Auto-Delete Timer:</b> <code>{auto_del}s</code>"
+        f"⏳ <b>Auto-Delete Timer:</b> <code>{auto_del}s</code>\n\n"
+        f"<i>Use /dbstats to inspect all MongoDB clusters.</i>"
         f"{Config.CREDITS_HTML}",
+        parse_mode=ParseMode.HTML,
+        link_preview_options=NO_PREVIEW,
+    )
+
+
+@Client.on_message(filters.command("dbstats") & filters.private & admin_filter)
+async def dbstats_cmd(client: Client, message: Message):
+    all_stats = await db.get_all_db_stats()
+    lines = ["🗄️ <b>Multi-MongoDB Storage Pool</b>\n"]
+    for info in all_stats:
+        status_icon = "🟢 ACTIVE" if info["is_active"] else ("🟡 STANDBY" if info["online"] else "🔴 OFFLINE")
+        if info["online"]:
+            lines.append(
+                f"• <b>{info['label']}</b> [{status_icon}]\n"
+                f"  Space: <code>{info['used_mb']} MB / {info['limit_mb']} MB</code> ({info['percent']}%) • Items: <code>{info['items']}</code>"
+            )
+        else:
+            lines.append(f"• <b>{info['label']}</b> [{status_icon}] — Connection error")
+
+    lines.append(
+        "\n<b>Admin DB Commands:</b>\n"
+        "• <code>/adddb &lt;mongodb_uri&gt;</code> — Add a new cluster live\n"
+        "• <code>/switchdb &lt;number&gt;</code> — Manually switch active write DB\n"
+        "• <code>/dblimit &lt;mb&gt;</code> — Set auto-failover threshold (default 460 MB)"
+    )
+    await message.reply_text(
+        "\n".join(lines) + Config.CREDITS_HTML,
+        parse_mode=ParseMode.HTML,
+        link_preview_options=NO_PREVIEW,
+    )
+
+
+@Client.on_message(filters.command("adddb") & filters.private & admin_filter)
+async def adddb_cmd(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text(
+            f"🗄️ <b>Usage:</b> <code>/adddb mongodb+srv://user:pass@cluster.mongodb.net/...</code>{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+    new_uri = message.text.split(None, 1)[1].strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    wait_msg = await client.send_message(
+        message.chat.id, "⏳ Testing connection & initializing indexes on new MongoDB cluster..."
+    )
+    ok, msg = await db.add_runtime_uri(new_uri)
+    icon = "✅" if ok else "❌"
+    await wait_msg.edit_text(
+        f"{icon} {html.escape(msg)}{Config.CREDITS_HTML}",
+        parse_mode=ParseMode.HTML,
+        link_preview_options=NO_PREVIEW,
+    )
+
+
+@Client.on_message(filters.command("switchdb") & filters.private & admin_filter)
+async def switchdb_cmd(client: Client, message: Message):
+    if len(message.command) < 2 or not message.command[1].isdigit():
+        return await message.reply_text(
+            f"Usage: <code>/switchdb &lt;db_number&gt;</code> (e.g. <code>/switchdb 2</code>){Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+    target_num = int(message.command[1])
+    if await db.set_active_db(target_num - 1):
+        await message.reply_text(
+            f"✅ Active write database switched to <b>DB #{target_num}</b>.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+    else:
+        await message.reply_text(
+            f"❌ Invalid DB number. Use <code>/dbstats</code> to see available databases.{Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+
+
+@Client.on_message(filters.command("dblimit") & filters.private & admin_filter)
+async def dblimit_cmd(client: Client, message: Message):
+    if len(message.command) < 2 or not message.command[1].isdigit():
+        return await message.reply_text(
+            f"Usage: <code>/dblimit &lt;megabytes&gt;</code> (e.g. <code>/dblimit 460</code> for 512 MB free tier){Config.CREDITS_HTML}",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=NO_PREVIEW,
+        )
+    mb = float(message.command[1])
+    db.max_size_mb = mb
+    await db.set_setting("db_max_size_mb", mb)
+    await db.ensure_writable_db(force_check=True)
+    await message.reply_text(
+        f"✅ Auto-failover storage threshold set to <b>{mb} MB</b>.{Config.CREDITS_HTML}",
         parse_mode=ParseMode.HTML,
         link_preview_options=NO_PREVIEW,
     )
