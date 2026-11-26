@@ -6,6 +6,7 @@ from pyrogram.types import (
     InputTextMessageContent,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    LinkPreviewOptions,
 )
 from bot.database import db
 
@@ -48,7 +49,7 @@ async def inline_search(client: Client, inline_query: InlineQuery):
                 description=f"Type: {item['type'].upper()} • Downloads: {item.get('downloads', 0)}",
                 input_message_content=InputTextMessageContent(
                     f"📦 **{item['title']}**\n🔗 [Click Here to Open]({link})",
-                    disable_web_page_preview=True,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("📥 Get File / Text", url=link)]]
