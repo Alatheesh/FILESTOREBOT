@@ -95,30 +95,51 @@ async def finish_wizard(client: Client, message: Message):
     await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
 
+def _extract_msg_id(token: str) -> int | None:
+    token = token.strip().rstrip("/")
+    if token.isdigit():
+        return int(token)
+    # Supports https://t.me/c/123456789/105 or https://t.me/channelname/105
+    if "t.me/" in token:
+        last_part = token.split("/")[-1]
+        if last_part.isdigit():
+            return int(last_part)
+    return None
+
+
 @Client.on_message(filters.command("batch") & filters.private)
 async def batch_range_cmd(client: Client, message: Message):
     if not _is_allowed_uploader(message.from_user.id):
         return await message.reply_text("🔒 Only admins can create batches.")
 
-    if len(message.command) < 3:
-        return await message.reply_text(
-            "📦 **Usage:** `/batch <start_msg_id> <end_msg_id> [Optional Title]`\n"
-            "Example: `/batch 105 118 Season 1 Complete`"
+    args = message.command[1:]
+    start_id = _extract_msg_id(args[0]) if len(args) >= 1 else None
+    end_id = _extract_msg_id(args[1]) if len(args) >= 2 else None
+
+    # If two valid message IDs or t.me post links were provided:
+    if start_id is not None and end_id is not None:
+        title = " ".join(args[2:]).strip() if len(args) > 2 else f"Batch {start_id}-{end_id}"
+        msg_ids = list(range(min(start_id, end_id), max(start_id, end_id) + 1))
+
+        slug = await db.save_item(
+            item_type="batch",
+            message_ids=msg_ids,
+            title=title,
+            created_by=message.from_user.id,
         )
+        reply_text, kb = await _make_share_reply(client, slug, title)
+        return await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
-    start_id = int(message.command[1])
-    end_id = int(message.command[2])
-    title = " ".join(message.command[3:]) if len(message.command) > 3 else f"Batch {start_id}-{end_id}"
-    msg_ids = list(range(min(start_id, end_id), max(start_id, end_id) + 1))
-
-    slug = await db.save_item(
-        item_type="batch",
-        message_ids=msg_ids,
-        title=title,
-        created_by=message.from_user.id,
+    # Otherwise, start interactive batch mode using any text given after /batch as the title!
+    title = " ".join(args).strip() if args else "Untitled Bundle"
+    WIZARD_SESSIONS[message.from_user.id] = {"title": title, "msg_ids": []}
+    await message.reply_text(
+        f"🧙‍♂️ **Interactive Batch Started** (`{title}`)\n\n"
+        "Forward or send all the **files, videos, photos, or text messages** you want to bundle.\n"
+        "• Type `/done` when finished to get your single share link.\n"
+        "• Type `/cancel` to abort.\n\n"
+        "*(Tip: You can also use `/batch <first_link_or_id> <last_link_or_id> Title` for instant channel-range batches.)*"
     )
-    reply_text, kb = await _make_share_reply(client, slug, title)
-    await message.reply_text(reply_text, reply_markup=kb, link_preview_options=NO_PREVIEW)
 
 
 @Client.on_message(
