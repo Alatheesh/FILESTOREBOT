@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 from pyrogram import Client
 from pyrogram.errors import FloodWait
 from bot.config import Config
@@ -13,12 +14,57 @@ async def _schedule_delete(client: Client, chat_id: int, message_ids: list[int],
         pass
 
 
-async def deliver_item(client: Client, chat_id: int, item: dict):
+def check_item_availability(item: dict, requester_id: int) -> tuple[bool, str]:
+    # Owner always has access to inspect/fetch their own items
+    is_owner = int(item.get("created_by", 0)) == int(requester_id)
+    if is_owner:
+        return True, ""
+
+    # 1. Check Expiration
+    expires_at = item.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", ""))
+        except Exception:
+            expires_at = None
+    if isinstance(expires_at, datetime.datetime) and datetime.datetime.utcnow() > expires_at:
+        return False, "expired"
+
+    # 2. Check Max Downloads Limit
+    max_dl = int(item.get("max_downloads", 0) or 0)
+    current_dl = int(item.get("downloads", 0) or 0)
+    if max_dl > 0 and current_dl >= max_dl:
+        return False, "limit_reached"
+
+    return True, ""
+
+
+async def destroy_expired_item(client: Client, item: dict):
+    await db.delete_item_by_slug(item["slug"])
+    msg_ids = item.get("message_ids", [])
+    if msg_ids:
+        try:
+            await client.delete_messages(chat_id=Config.DB_CHANNEL_ID, message_ids=msg_ids)
+        except Exception:
+            pass
+
+
+async def deliver_item(
+    client: Client,
+    chat_id: int,
+    item: dict,
+    single_msg_id: int | None = None,
+):
     sent_ids: list[int] = []
     auto_del = await db.get_setting("auto_delete", Config.AUTO_DELETE_SECONDS)
     protect = await db.get_setting("protect_content", Config.PROTECT_CONTENT)
 
-    if item["type"] == "text" and item.get("text_content"):
+    if single_msg_id is not None:
+        target_ids = [int(single_msg_id)]
+    else:
+        target_ids = item.get("message_ids", [])
+
+    if item["type"] == "text" and item.get("text_content") and single_msg_id is None:
         msg = await client.send_message(
             chat_id=chat_id,
             text=f"**{item['title']}**\n\n{item['text_content']}",
@@ -26,7 +72,7 @@ async def deliver_item(client: Client, chat_id: int, item: dict):
         )
         sent_ids.append(msg.id)
     else:
-        for msg_id in item["message_ids"]:
+        for msg_id in target_ids:
             try:
                 copied = await client.copy_message(
                     chat_id=chat_id,
@@ -48,7 +94,13 @@ async def deliver_item(client: Client, chat_id: int, item: dict):
             except Exception:
                 continue
 
-    await db.increment_downloads(item["slug"])
+    new_downloads = await db.increment_downloads(item["slug"])
+
+    # Auto-destruct if max_downloads limit was just reached by a non-owner
+    max_dl = int(item.get("max_downloads", 0) or 0)
+    is_owner = int(item.get("created_by", 0)) == int(chat_id)
+    if not is_owner and max_dl > 0 and new_downloads >= max_dl:
+        await destroy_expired_item(client, item)
 
     if auto_del and int(auto_del) > 0 and sent_ids:
         mins = round(int(auto_del) / 60, 1)

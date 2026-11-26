@@ -53,13 +53,21 @@ class Database:
         text_content: str = "",
         file_size: int = 0,
         mime_type: str = "",
+        sub_items: list[dict] | None = None,
     ) -> str:
         slug = secrets.token_urlsafe(7)
+        if sub_items is None:
+            sub_items = [
+                {"msg_id": mid, "title": f"Item #{idx + 1}", "type": "media"}
+                for idx, mid in enumerate(message_ids)
+            ]
+
         await self.items.insert_one(
             {
                 "slug": slug,
                 "type": item_type,
                 "message_ids": message_ids,
+                "sub_items": sub_items,
                 "title": title,
                 "text_content": text_content,
                 "file_size": file_size,
@@ -67,6 +75,10 @@ class Database:
                 "created_by": int(created_by),
                 "owner_name": owner_name,
                 "downloads": 0,
+                # Link Rules (Phase 3)
+                "pin_code": "",
+                "expires_at": None,
+                "max_downloads": 0,
                 "created_at": datetime.datetime.utcnow(),
             }
         )
@@ -75,10 +87,27 @@ class Database:
     async def get_item(self, slug: str) -> dict | None:
         return await self.items.find_one({"slug": slug})
 
-    async def increment_downloads(self, slug: str):
-        await self.items.update_one({"slug": slug}, {"$inc": {"downloads": 1}})
+    async def increment_downloads(self, slug: str) -> int:
+        doc = await self.items.find_one_and_update(
+            {"slug": slug},
+            {"$inc": {"downloads": 1}},
+            projection={"downloads": 1},
+            return_document=True,
+        )
+        return doc.get("downloads", 0) if doc else 0
 
-    # Strictly scoped to ONE user's stored items
+    def _serialize_item(self, d: dict) -> dict:
+        if isinstance(d.get("created_at"), datetime.datetime):
+            d["created_at"] = d["created_at"].isoformat() + "Z"
+        if isinstance(d.get("expires_at"), datetime.datetime):
+            d["expires_at"] = d["expires_at"].isoformat() + "Z"
+        if not d.get("sub_items") and d.get("message_ids"):
+            d["sub_items"] = [
+                {"msg_id": mid, "title": f"Item #{i + 1}", "type": "media"}
+                for i, mid in enumerate(d["message_ids"])
+            ]
+        return d
+
     async def get_user_items(
         self,
         user_id: int,
@@ -104,10 +133,7 @@ class Database:
 
         cursor = self.items.find(filt, {"_id": 0}).sort(sort_spec).limit(limit)
         docs = await cursor.to_list(length=limit)
-        for d in docs:
-            if isinstance(d.get("created_at"), datetime.datetime):
-                d["created_at"] = d["created_at"].isoformat() + "Z"
-        return docs
+        return [self._serialize_item(d) for d in docs]
 
     async def update_user_item(
         self,
@@ -115,14 +141,34 @@ class Database:
         user_id: int,
         title: str | None = None,
         text_content: str | None = None,
+        pin_code: str | None = None,
+        expire_hours: int | None = None,
+        max_downloads: int | None = None,
+        sub_items: list[dict] | None = None,
     ) -> dict | None:
         updates: dict = {}
         if title is not None and title.strip():
             updates["title"] = title.strip()[:120]
         if text_content is not None:
             updates["text_content"] = text_content
+        if pin_code is not None:
+            clean_pin = "".join(ch for ch in str(pin_code) if ch.isdigit())[:4]
+            updates["pin_code"] = clean_pin
+        if expire_hours is not None:
+            hrs = int(expire_hours)
+            if hrs <= 0:
+                updates["expires_at"] = None
+            else:
+                updates["expires_at"] = datetime.datetime.utcnow() + datetime.timedelta(hours=hrs)
+        if max_downloads is not None:
+            updates["max_downloads"] = max(0, int(max_downloads))
+        if sub_items is not None:
+            updates["sub_items"] = sub_items
+            updates["message_ids"] = [int(x["msg_id"]) for x in sub_items]
+
         if not updates:
-            return await self.items.find_one({"slug": slug, "created_by": int(user_id)}, {"_id": 0})
+            doc = await self.items.find_one({"slug": slug, "created_by": int(user_id)}, {"_id": 0})
+            return self._serialize_item(doc) if doc else None
 
         res = await self.items.find_one_and_update(
             {"slug": slug, "created_by": int(user_id)},
@@ -130,15 +176,15 @@ class Database:
             projection={"_id": 0},
             return_document=True,
         )
-        if res and isinstance(res.get("created_at"), datetime.datetime):
-            res["created_at"] = res["created_at"].isoformat() + "Z"
-        return res
+        return self._serialize_item(res) if res else None
 
     async def delete_user_item(self, slug: str, user_id: int) -> dict | None:
-        # Atomically finds and deletes ONLY if created_by matches user_id
         return await self.items.find_one_and_delete(
             {"slug": slug, "created_by": int(user_id)}
         )
+
+    async def delete_item_by_slug(self, slug: str) -> dict | None:
+        return await self.items.find_one_and_delete({"slug": slug})
 
     async def search_user_items(self, user_id: int, query: str, limit: int = 15) -> list[dict]:
         filt: dict = {"created_by": int(user_id)}

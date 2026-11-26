@@ -43,11 +43,13 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
 
 def _auth_user(request: web.Request) -> dict | None:
     init_data = request.headers.get("X-Telegram-Init-Data", "")
+    if not init_data:
+        init_data = request.query.get("initData", "")
     return verify_telegram_init_data(init_data)
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok", "service": "telegram-vault-bot-v2"})
+    return web.json_response({"status": "ok", "service": "telegram-vault-bot-v3"})
 
 
 async def handle_app_index(request: web.Request) -> web.FileResponse:
@@ -90,20 +92,44 @@ async def api_update_item(request: web.Request) -> web.Response:
     user_id = int(user["id"])
     body = await request.json()
 
+    existing = await db.get_item(slug)
+    if not existing or int(existing.get("created_by", 0)) != user_id:
+        return web.json_response({"error": "Item not found or access denied"}, status=403)
+
+    # If user removed specific sub-items from a batch, delete ONLY those removed messages from DB_CHANNEL_ID
+    new_sub_items = body.get("sub_items")
+    removed_msg_ids: list[int] = []
+    if isinstance(new_sub_items, list):
+        if len(new_sub_items) == 0:
+            return web.json_response(
+                {"error": "A batch must keep at least 1 item. Use Delete to remove the entire batch."},
+                status=400,
+            )
+        old_ids = set(int(x) for x in existing.get("message_ids", []))
+        kept_ids = set(int(x["msg_id"]) for x in new_sub_items)
+        removed_msg_ids = list(old_ids - kept_ids)
+
     updated = await db.update_user_item(
         slug=slug,
         user_id=user_id,
         title=body.get("title"),
         text_content=body.get("text_content"),
+        pin_code=body.get("pin_code"),
+        expire_hours=body.get("expire_hours"),
+        max_downloads=body.get("max_downloads"),
+        sub_items=new_sub_items,
     )
     if not updated:
-        return web.json_response(
-            {"error": "Item not found or you do not own this item"}, status=403
-        )
+        return web.json_response({"error": "Failed to update item"}, status=400)
 
-    # Also update text message inside DB_CHANNEL_ID if it is a text note
+    bot: Client = request.app["bot"]
+    if removed_msg_ids:
+        try:
+            await bot.delete_messages(chat_id=Config.DB_CHANNEL_ID, message_ids=removed_msg_ids)
+        except Exception:
+            pass
+
     if updated["type"] == "text" and updated.get("message_ids"):
-        bot: Client = request.app["bot"]
         try:
             await bot.edit_message_text(
                 chat_id=Config.DB_CHANNEL_ID,
@@ -124,14 +150,12 @@ async def api_delete_item(request: web.Request) -> web.Response:
     slug = request.match_info["slug"]
     user_id = int(user["id"])
 
-    # Deletes from MongoDB ONLY if created_by == user_id
     deleted = await db.delete_user_item(slug=slug, user_id=user_id)
     if not deleted:
         return web.json_response(
             {"error": "Item not found or belongs to another user"}, status=403
         )
 
-    # Delete ONLY this item's stored messages from the private DB channel
     bot: Client = request.app["bot"]
     msg_ids = deleted.get("message_ids", [])
     if msg_ids:
@@ -158,9 +182,52 @@ async def api_deliver_item(request: web.Request) -> web.Response:
     if not item:
         return web.json_response({"error": "Item not found"}, status=404)
 
+    single_msg_id = None
+    try:
+        body = await request.json()
+        if body and body.get("msg_id"):
+            single_msg_id = int(body["msg_id"])
+    except Exception:
+        pass
+
     bot: Client = request.app["bot"]
-    await deliver_item(bot, user_id, item)
+    await deliver_item(bot, user_id, item, single_msg_id=single_msg_id)
     return web.json_response({"ok": True, "message": "Sent to your Telegram chat!"})
+
+
+async def api_preview_media(request: web.Request) -> web.Response:
+    user = _auth_user(request)
+    if not user:
+        return web.Response(status=401, text="Unauthorized")
+
+    slug = request.match_info["slug"]
+    user_id = int(user["id"])
+    item = await db.get_item(slug)
+    if not item or int(item.get("created_by", 0)) != user_id:
+        return web.Response(status=403, text="Forbidden")
+
+    msg_id_param = request.query.get("msg_id")
+    target_msg_id = int(msg_id_param) if msg_id_param and msg_id_param.isdigit() else item["message_ids"][0]
+
+    bot: Client = request.app["bot"]
+    try:
+        msg = await bot.get_messages(Config.DB_CHANNEL_ID, target_msg_id)
+        if not msg or not msg.media:
+            return web.Response(status=404, text="No previewable media")
+
+        # Cap in-app streaming preview at 15 MB to protect Hugging Face RAM
+        media_obj = getattr(msg, msg.media.value, None)
+        size = getattr(media_obj, "file_size", 0) or 0
+        if size > 15 * 1024 * 1024:
+            return web.Response(status=413, text="File too large for inline preview")
+
+        mime = getattr(media_obj, "mime_type", None) or (
+            "image/jpeg" if msg.photo else "application/octet-stream"
+        )
+        file_bytes = await bot.download_media(msg, in_memory=True)
+        return web.Response(body=file_bytes.getvalue(), content_type=mime)
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
 
 
 async def api_prepare_share(request: web.Request) -> web.Response:
@@ -176,6 +243,7 @@ async def api_prepare_share(request: web.Request) -> web.Response:
 
     bot_username = request.app["bot"].me.username
     deep_link = f"https://t.me/{bot_username}?start={slug}"
+    pin_note = " 🔐 (PIN Protected)" if item.get("pin_code") else ""
 
     payload = {
         "user_id": user_id,
@@ -183,9 +251,9 @@ async def api_prepare_share(request: web.Request) -> web.Response:
             "type": "article",
             "id": slug,
             "title": item["title"],
-            "description": f"Vault {item['type'].upper()} • Tap to open in @{bot_username}",
+            "description": f"Vault {item['type'].upper()}{pin_note} • Tap to open in @{bot_username}",
             "input_message_content": {
-                "message_text": f"📦 <b>{item['title']}</b>\n\n🔗 <a href='{deep_link}'>Open in Vault Bot</a>",
+                "message_text": f"📦 <b>{item['title']}</b>{pin_note}\n\n🔗 <a href='{deep_link}'>Open in Vault Bot</a>",
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
@@ -226,6 +294,7 @@ async def start_webapp_server(bot: Client) -> web.AppRunner:
     app.router.add_patch("/api/items/{slug}", api_update_item)
     app.router.add_delete("/api/items/{slug}", api_delete_item)
     app.router.add_post("/api/deliver/{slug}", api_deliver_item)
+    app.router.add_get("/api/preview/{slug}", api_preview_media)
     app.router.add_post("/api/prepare-share/{slug}", api_prepare_share)
 
     runner = web.AppRunner(app)
