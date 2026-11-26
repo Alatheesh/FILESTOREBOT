@@ -180,7 +180,6 @@ async def batch_range_cmd(client: Client, message: Message):
             "cancel",
             "batch",
             "search",
-            "request",
             "stats",
             "broadcast",
             "ban",
